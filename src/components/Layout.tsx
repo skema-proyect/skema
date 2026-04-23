@@ -1,6 +1,4 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
-import type { Session } from "@supabase/supabase-js";
 import {
   LayoutDashboard,
   Mic,
@@ -8,29 +6,20 @@ import {
   PenTool,
   BookOpen,
   Search,
-  LogOut,
 } from "lucide-react";
 
 const navItems = [
-  { label: "Dashboard",      icon: LayoutDashboard, to: "/"            },
-  { label: "Estudio de Voz", icon: Mic,             to: "/voz"         },
-  { label: "Documentos",     icon: FileText,        to: "/documentos"  },
-  { label: "Planos",         icon: PenTool,         to: "/planos"      },
-  { label: "Normativa",      icon: BookOpen,        to: "/normativa"   },
-  { label: "Investigación",  icon: Search,          to: "/investigacion"},
+  { label: "Dashboard",      icon: LayoutDashboard, to: "/"             },
+  { label: "Estudio de Voz", icon: Mic,             to: "/voz"          },
+  { label: "Documentos",     icon: FileText,        to: "/documentos"   },
+  { label: "Planos",         icon: PenTool,         to: "/planos"       },
+  { label: "Normativa",      icon: BookOpen,        to: "/normativa"    },
+  { label: "Investigación",  icon: Search,          to: "/investigacion" },
 ];
 
-export default function Layout({ session }: { session: Session | null }) {
-  const navigate  = useNavigate();
-  const location  = useLocation();
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
-  };
-
-  const userEmail = session?.user?.email ?? "";
-  const initials  = userEmail.slice(0, 2).toUpperCase();
+export default function Layout() {
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <div className="flex min-h-screen bg-skema-bg">
@@ -65,21 +54,9 @@ export default function Layout({ session }: { session: Session | null }) {
           })}
         </nav>
 
-        {/* User */}
-        <div className="px-4 py-4 border-t border-skema-border flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-skema-accent/20 flex items-center justify-center text-skema-accent text-[11px] font-semibold">
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-skema-text text-[11px] truncate">{userEmail}</p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="text-skema-muted hover:text-skema-danger transition-colors"
-            title="Cerrar sesión"
-          >
-            <LogOut size={15} />
-          </button>
+        {/* Version */}
+        <div className="px-6 py-4 border-t border-skema-border">
+          <p className="text-skema-muted text-[10px]">SKEMA v0.1 · Piloto</p>
         </div>
       </aside>
 
