@@ -105,7 +105,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           className="flex items-center gap-2 px-2 hover:opacity-70 transition-opacity"
           title="Nuevo chat"
         >
-          <img src="/hormiga-skema.png" alt="SKEMA" className="h-7 w-auto" style={{ filter: "invert(1)" }} />
+          <img src="/logo-skema.png" alt="SKEMA" className="h-6 w-auto" style={{ filter: "invert(1)" }} />
         </button>
         <div className="flex items-center gap-1">
           <button

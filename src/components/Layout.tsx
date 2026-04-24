@@ -67,7 +67,9 @@ export default function Layout() {
           <button onClick={() => setSidebarOpen(true)} className="text-s-muted hover:text-s-text">
             <Menu size={20} />
           </button>
-          <img src="/logo-skema.png" alt="SKEMA" className="h-5 w-auto" />
+          <button onClick={handleNewChat}>
+            <img src="/logo-skema.png" alt="SKEMA" className="h-5 w-auto hover:opacity-70 transition-opacity" />
+          </button>
         </div>
 
         {/* Page content */}
