@@ -153,7 +153,7 @@ export default function ChatView() {
               <button
                 key={label}
                 onClick={() => setInput(prompt)}
-                className="flex items-center gap-2 px-3 py-2 border border-s-border rounded-lg text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors"
+                className="flex items-center gap-2 px-4 py-2.5 border border-s-border rounded-lg text-[13px] sm:text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors"
               >
                 <Icon size={13} />
                 {label}
@@ -196,7 +196,7 @@ export default function ChatView() {
               }}
               placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
               rows={1}
-              className="w-full px-4 pt-3 pb-1 text-[14px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted"
+              className="w-full px-4 pt-3 pb-1 text-[16px] sm:text-[14px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted"
             />
             <div className="flex items-center justify-between px-3 pb-2 pt-1">
               <span className="text-[10px] text-s-muted">Enter para enviar · Shift+Enter nueva línea</span>

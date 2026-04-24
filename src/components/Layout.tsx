@@ -39,19 +39,16 @@ export default function Layout() {
         />
       </div>
 
-      {/* Sidebar — mobile overlay */}
+      {/* Sidebar — mobile fullscreen */}
       {sidebarOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
-          <div className="w-72 flex-shrink-0 flex flex-col shadow-xl">
-            <Sidebar
-              currentConvId={currentConvId}
-              onSelectConv={handleSelectConv}
-              onNewChat={handleNewChat}
-              onClose={() => setSidebarOpen(false)}
-              refresh={refresh}
-            />
-          </div>
-          <div className="flex-1 bg-black/40" onClick={() => setSidebarOpen(false)} />
+        <div className="lg:hidden fixed inset-0 z-50">
+          <Sidebar
+            currentConvId={currentConvId}
+            onSelectConv={handleSelectConv}
+            onNewChat={handleNewChat}
+            onClose={() => setSidebarOpen(false)}
+            refresh={refresh}
+          />
         </div>
       )}
 
