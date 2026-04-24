@@ -197,45 +197,53 @@ export default function ChatView() {
       )}
 
       {/* Input bar */}
-      <div className="px-4 pb-4 pt-2">
+      <div className="px-3 pb-4 pt-2">
         <div className="max-w-2xl mx-auto">
-          <div className="border border-s-border rounded-xl bg-s-surface focus-within:border-s-text transition-colors">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-              }}
-              placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
-              rows={1}
-              className="w-full px-4 pt-3 pb-1 text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted"
-            />
-            <div className="flex items-center justify-between px-3 pb-2 pt-1">
-              <span className="text-[10px] text-s-muted">Enter para enviar · Shift+Enter nueva línea</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={listening ? stopVoice : startVoice}
-                  className={`p-1.5 rounded-lg transition-colors ${
-                    listening
-                      ? "bg-s-danger text-white"
-                      : "text-s-muted hover:text-s-text hover:bg-s-border"
-                  }`}
-                  title={listening ? "Detener" : "Hablar"}
-                >
-                  {listening ? <MicOff size={15} /> : <Mic size={15} />}
-                </button>
-                <button
-                  onClick={() => send()}
-                  disabled={!input.trim() || loading}
-                  className="p-1.5 rounded-lg bg-s-accent text-white disabled:opacity-30 hover:opacity-80 transition-opacity"
-                >
-                  <Send size={15} />
-                </button>
-              </div>
+          <div className="flex items-end gap-2">
+            {/* Pill input */}
+            <div className="flex-1 border border-s-border rounded-full bg-s-surface focus-within:border-s-text transition-colors px-5 py-3">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                }}
+                placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
+                rows={1}
+                className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
+              />
             </div>
+
+            {/* Circle action button */}
+            {input.trim() ? (
+              <button
+                onClick={() => send()}
+                disabled={loading}
+                className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 disabled:opacity-30 transition-opacity"
+                title="Enviar"
+              >
+                <Send size={19} />
+              </button>
+            ) : listening ? (
+              <button
+                onClick={stopVoice}
+                className="w-12 h-12 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 animate-pulse"
+                title="Detener grabación"
+              >
+                <MicOff size={19} />
+              </button>
+            ) : (
+              <button
+                onClick={startVoice}
+                className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 transition-opacity"
+                title="Hablar"
+              >
+                <Mic size={19} />
+              </button>
+            )}
           </div>
-          <p className="text-center text-[10px] text-s-muted mt-2">
+          <p className="text-center text-[11px] text-s-muted mt-2">
             SKEMA puede cometer errores. Verifica la información importante.
           </p>
         </div>
