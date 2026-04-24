@@ -197,7 +197,7 @@ export default function ChatView() {
       )}
 
       {/* Input bar */}
-      <div className="px-3 pb-4 pt-2">
+      <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-end gap-2">
             {/* Pill input */}
