@@ -38,6 +38,14 @@ Genera documentos profesionales estructurados.
 Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
+const SEARCH_SYSTEM = `${SYSTEM}
+
+MODO BÚSQUEDA ACTIVO:
+Se te proporcionan resultados de búsqueda web en tiempo real.
+Usa esa información como base principal de tu respuesta.
+Cita las fuentes con el formato [Fuente: nombre del sitio] al final de los párrafos relevantes.
+Si los resultados no responden bien la pregunta, indícalo y complementa con tu conocimiento.`;
+
 const SKETCH_SYSTEM = `Eres un generador de planos esquemáticos SVG para un estudio de arquitectura.
 Responde ÚNICAMENTE con el código SVG. Sin explicación, sin markdown.
 Viewport 800x600. viewBox="0 0 800 600".
@@ -45,6 +53,22 @@ Paredes: stroke #333, strokeWidth 2, fill blanco o #F8F8F8.
 Etiquetas: font-family monospace, font-size 11px, color #333.
 Incluye cotas exteriores y escala gráfica.
 Si hay orientación, añade símbolo N en esquina superior derecha.`;
+
+// ── Web search via Tavily ──────────────────────────────────────────────────────
+async function searchWeb(query) {
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: process.env.TAVILY_API_KEY,
+      query,
+      search_depth: "basic",
+      max_results: 5,
+      include_answer: true,
+    }),
+  });
+  return res.json();
+}
 
 // ── Intent detection ───────────────────────────────────────────────────────────
 function detectIntent(message) {
@@ -58,6 +82,9 @@ function detectIntent(message) {
 
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
+
+  if (/\b(busca|buscar|investiga|investigar|información actualizada|noticias|últimas|actualidad|hoy|precio.*actual|cuánto.*cuesta|qué dice)\b/i.test(message))
+    return "search";
 
   return "chat";
 }
@@ -125,6 +152,23 @@ export default async function handler(req, res) {
         messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
+    }
+
+    // ── Search ──
+    if (intent === "search") {
+      const searchData = await searchWeb(lastUser.content);
+      const snippets = (searchData.results ?? [])
+        .slice(0, 5)
+        .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content}`)
+        .join("\n\n");
+      const augmented = `Pregunta del usuario: ${lastUser.content}\n\nResultados de búsqueda web:\n${snippets}`;
+      const msg = await client.messages.create({
+        model: MODELS.smart,
+        max_tokens: 2048,
+        system: SEARCH_SYSTEM,
+        messages: [{ role: "user", content: augmented }],
+      });
+      return res.json({ content: msg.content[0]?.text ?? "", tool: "search", model: MODELS.smart });
     }
 
     // ── General chat ──
