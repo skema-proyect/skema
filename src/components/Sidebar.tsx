@@ -233,6 +233,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
 
         <div className="px-2 pt-1">
           <p className="text-[12px] text-s-sidebar-muted">SKEMA v0.1 · Piloto</p>
+          <p className="text-[11px] text-s-sidebar-muted mt-0.5">Desarrollado por ai-connect.es</p>
         </div>
       </div>
 

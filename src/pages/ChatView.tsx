@@ -157,10 +157,10 @@ export default function ChatView() {
 
       {/* Empty state */}
       {messages.length === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4 pb-40">
-          <img src="/hormiga-skema.png" alt="SKEMA" className="h-20 w-auto mb-6 opacity-90" />
+        <div className="flex-1 flex flex-col items-center justify-center px-4 pb-4">
+          <img src="/hormiga-skema.png" alt="SKEMA" className="h-14 w-auto mb-4 opacity-90" />
           <h1 className="text-s-text text-2xl font-light mb-1">{greeting}</h1>
-          <p className="text-s-muted text-sm mb-8">¿En qué puedo ayudarte hoy?</p>
+          <p className="text-s-muted text-sm mb-5">¿En qué puedo ayudarte hoy?</p>
           <div className="flex flex-wrap gap-2 justify-center max-w-lg">
             {CHIPS.map(({ icon: Icon, label, prompt }) => (
               <button
