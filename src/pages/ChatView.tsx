@@ -207,7 +207,8 @@ export default function ChatView() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+                  const isMobile = window.matchMedia("(pointer: coarse)").matches;
+                  if (e.key === "Enter" && !e.shiftKey && !isMobile) { e.preventDefault(); send(); }
                 }}
                 placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
                 rows={1}
