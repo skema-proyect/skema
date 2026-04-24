@@ -5,20 +5,26 @@ export default {
     extend: {
       fontFamily: {
         inter: ["Inter", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
       },
       colors: {
-        skema: {
-          bg:            "#0F1117",
-          surface:       "#1A1D27",
-          border:        "#2A2D3A",
-          accent:        "#4F7FFF",
-          "accent-dark": "#3A6AE8",
-          text:          "#E8EAF0",
-          muted:         "#7A7F96",
-          success:       "#2ECC71",
-          warning:       "#F39C12",
-          danger:        "#E74C3C",
+        s: {
+          // Sidebar
+          sidebar:        "#171717",
+          "sidebar-hover":"#2a2a2a",
+          "sidebar-text": "#ececec",
+          "sidebar-muted":"#8e8e8e",
+          "sidebar-border":"#2f2f2f",
+          // Main area
+          bg:             "#ffffff",
+          surface:        "#f4f4f4",
+          border:         "#e5e5e5",
+          text:           "#0d0d0d",
+          muted:          "#6b6b6b",
+          // Accents
+          accent:         "#000000",
+          "accent-text":  "#ffffff",
+          danger:         "#dc2626",
+          success:        "#16a34a",
         },
       },
     },
