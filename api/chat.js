@@ -83,10 +83,18 @@ function detectIntent(message) {
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
 
-  if (/\b(busca|buscar|investiga|investigar|información actualizada|noticias|últimas|actualidad|hoy|precio.*actual|cuánto.*cuesta|qué dice)\b/i.test(message))
-    return "search";
-
   return "chat";
+}
+
+// ── Router inteligente: ¿necesita datos en tiempo real? ───────────────────────
+async function needsRealTimeData(message) {
+  const msg = await client.messages.create({
+    model: MODELS.fast,
+    max_tokens: 5,
+    system: "Responde únicamente YES o NO. ¿Esta pregunta requiere información actualizada, noticias recientes, precios actuales, resultados deportivos, eventos de 2024-2026, o cualquier dato que cambie con el tiempo y no esté en el conocimiento general?",
+    messages: [{ role: "user", content: message }],
+  });
+  return (msg.content[0]?.text ?? "").trim().toUpperCase().startsWith("Y");
 }
 
 // ── Model selection ────────────────────────────────────────────────────────────
@@ -154,14 +162,16 @@ export default async function handler(req, res) {
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
     }
 
-    // ── Search ──
-    if (intent === "search") {
+    // ── General chat — router inteligente ──
+    const needsSearch = await needsRealTimeData(lastUser.content);
+
+    if (needsSearch) {
       const searchData = await searchWeb(lastUser.content);
       const snippets = (searchData.results ?? [])
         .slice(0, 5)
         .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content}`)
         .join("\n\n");
-      const augmented = `Pregunta del usuario: ${lastUser.content}\n\nResultados de búsqueda web:\n${snippets}`;
+      const augmented = `Pregunta del usuario: ${lastUser.content}\n\nResultados de búsqueda web en tiempo real:\n${snippets}`;
       const msg = await client.messages.create({
         model: MODELS.smart,
         max_tokens: 2048,
@@ -171,7 +181,6 @@ export default async function handler(req, res) {
       return res.json({ content: msg.content[0]?.text ?? "", tool: "search", model: MODELS.smart });
     }
 
-    // ── General chat ──
     const msg = await client.messages.create({
       model,
       max_tokens: 1500,
