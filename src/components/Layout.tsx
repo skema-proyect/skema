@@ -13,8 +13,7 @@ export default function Layout() {
   const bump = useCallback(() => setRefresh(r => r + 1), []);
 
   const handleNewChat = useCallback(() => {
-    const conv = convsDB.create();
-    setCurrentConvId(conv.id);
+    setCurrentConvId(null);
     navigate("/");
     setSidebarOpen(false);
     bump();
@@ -26,6 +25,13 @@ export default function Layout() {
     bump();
   }, [bump]);
 
+  const handleServiceSelect = useCallback((prompt: string) => {
+    setCurrentConvId(null);
+    navigate("/", { state: { initialPrompt: prompt } });
+    setSidebarOpen(false);
+    bump();
+  }, [navigate, bump]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-s-bg text-s-text font-inter">
 
@@ -35,6 +41,7 @@ export default function Layout() {
           currentConvId={currentConvId}
           onSelectConv={handleSelectConv}
           onNewChat={handleNewChat}
+          onServiceSelect={handleServiceSelect}
           refresh={refresh}
         />
       </div>
@@ -46,6 +53,7 @@ export default function Layout() {
             currentConvId={currentConvId}
             onSelectConv={handleSelectConv}
             onNewChat={handleNewChat}
+            onServiceSelect={handleServiceSelect}
             onClose={() => setSidebarOpen(false)}
             refresh={refresh}
           />

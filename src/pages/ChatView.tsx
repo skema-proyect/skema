@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, MicOff, Square, PenTool, BookOpen, FileText, Search, Download } from "lucide-react";
 import { conversations as convsDB } from "@/lib/storage";
 import type { Message } from "@/types";
@@ -19,6 +19,7 @@ const CHIPS = [
 
 export default function ChatView() {
   const { currentConvId, setCurrentConvId, bump } = useOutletContext<OutletCtx>();
+  const location = useLocation();
 
   const conv      = currentConvId ? convsDB.get(currentConvId) : null;
   const messages  = conv?.messages ?? [];
@@ -30,6 +31,16 @@ export default function ChatView() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mediaRef    = useRef<MediaRecorder | null>(null);
   const chunksRef   = useRef<Blob[]>([]);
+
+  // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
+  useEffect(() => {
+    const prompt = (location.state as { initialPrompt?: string } | null)?.initialPrompt;
+    if (prompt) {
+      setInput(prompt);
+      // Clear state so back-navigation doesn't re-trigger
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
 
   // Auto-scroll
   useEffect(() => {
@@ -155,7 +166,7 @@ export default function ChatView() {
               <button
                 key={label}
                 onClick={() => setInput(prompt)}
-                className="flex items-center gap-2 px-4 py-2.5 border border-s-border rounded-lg text-[13px] sm:text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors"
+                className="flex items-center gap-2 px-4 py-2.5 border border-s-border rounded-lg text-[15px] sm:text-[13px] text-s-muted hover:text-s-text hover:border-s-text transition-colors"
               >
                 <Icon size={13} />
                 {label}
@@ -198,7 +209,7 @@ export default function ChatView() {
               }}
               placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
               rows={1}
-              className="w-full px-4 pt-3 pb-1 text-[16px] sm:text-[14px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted"
+              className="w-full px-4 pt-3 pb-1 text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted"
             />
             <div className="flex items-center justify-between px-3 pb-2 pt-1">
               <span className="text-[10px] text-s-muted">Enter para enviar · Shift+Enter nueva línea</span>
@@ -238,7 +249,7 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] bg-s-surface border border-s-border rounded-2xl px-4 py-3 text-[14px] text-s-text whitespace-pre-wrap">
+        <div className="max-w-[75%] bg-s-surface border border-s-border rounded-2xl px-4 py-3 text-[16px] sm:text-[14px] text-s-text whitespace-pre-wrap">
           {m.content}
         </div>
       </div>
@@ -251,7 +262,7 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
         <img src="/logo-skema.png" alt="" className="w-4 h-4 invert" />
       </div>
       <div className="flex-1 space-y-3">
-        <div className="text-[14px] text-s-text leading-relaxed whitespace-pre-wrap">{m.content}</div>
+        <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed whitespace-pre-wrap">{m.content}</div>
         {m.svg && (
           <div className="border border-s-border rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-s-border bg-s-surface">
