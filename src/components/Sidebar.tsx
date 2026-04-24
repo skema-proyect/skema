@@ -96,9 +96,9 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   const isActive = (path: string) => location.pathname === path;
 
   return (
-    <div className="flex flex-col h-full bg-s-sidebar text-s-sidebar-text select-none">
+    <div className="flex flex-col h-full bg-s-sidebar text-s-sidebar-text select-none relative">
 
-      {/* Header — logo + nuevo chat */}
+      {/* Header — logo + cerrar */}
       <div className="flex items-center justify-between px-3 pt-4 pb-3 border-b border-s-sidebar-border">
         <button
           onClick={() => { onNewChat(); onClose?.(); }}
@@ -107,20 +107,11 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         >
           <img src="/logo-skema.png" alt="SKEMA" className="h-6 w-auto" style={{ filter: "invert(1)" }} />
         </button>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => { onNewChat(); onClose?.(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[15px] bg-s-sidebar-hover text-s-sidebar-text hover:opacity-80 transition-opacity"
-            title="Nuevo chat"
-          >
-            <Plus size={14} /> Nuevo chat
+        {onClose && (
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted lg:hidden">
+            <X size={17} />
           </button>
-          {onClose && (
-            <button onClick={onClose} className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted lg:hidden">
-              <X size={17} />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Servicios rápidos */}
@@ -244,6 +235,16 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           <p className="text-[12px] text-s-sidebar-muted">SKEMA v0.1 · Piloto</p>
         </div>
       </div>
+
+      {/* FAB — Nuevo chat */}
+      <button
+        onClick={() => { onNewChat(); onClose?.(); }}
+        className="absolute bottom-20 right-4 flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[15px] font-medium shadow-lg hover:opacity-90 transition-opacity"
+        title="Nuevo chat"
+      >
+        <PenLine size={16} />
+        Nuevo chat
+      </button>
     </div>
   );
 }
