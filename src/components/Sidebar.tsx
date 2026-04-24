@@ -239,7 +239,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
       {/* FAB — Nuevo chat */}
       <button
         onClick={() => { onNewChat(); onClose?.(); }}
-        className="absolute bottom-20 right-4 flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[15px] font-medium shadow-lg hover:opacity-90 transition-opacity"
+        className="lg:hidden absolute bottom-20 right-4 flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[15px] font-medium shadow-lg hover:opacity-90 transition-opacity"
         title="Nuevo chat"
       >
         <PenLine size={16} />
