@@ -35,6 +35,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   const [newName,  setNewName]    = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
+  const isStandalone = typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -47,10 +48,13 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   }, []);
 
   const handleInstall = async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    const { outcome } = await installPrompt.userChoice;
-    if (outcome === "accepted") setInstalled(true);
+    if (installPrompt) {
+      installPrompt.prompt();
+      const { outcome } = await installPrompt.userChoice;
+      if (outcome === "accepted") setInstalled(true);
+    } else {
+      alert("Toca el menú del navegador (⋮) y selecciona 'Añadir a pantalla de inicio'");
+    }
   };
 
   const allProjects = projectsDB.getAll();
@@ -223,11 +227,11 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           <Calendar size={15} /> Agenda
         </button>
 
-        {/* Install button */}
-        {installPrompt && !installed && (
+        {/* Install button — solo móvil web (no desktop, no PWA instalada) */}
+        {!installed && !isStandalone && (
           <button onClick={handleInstall}
-            className="w-full flex items-center gap-2.5 px-2 py-2 rounded text-[13px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors">
-            <Download size={15} /> Instalar app
+            className="lg:hidden w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors">
+            <Download size={16} /> Instalar app
           </button>
         )}
 
