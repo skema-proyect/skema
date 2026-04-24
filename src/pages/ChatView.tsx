@@ -137,7 +137,9 @@ export default function ChatView() {
   };
 
   const hour = new Date().getHours();
-  const greeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
+  const timeGreeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
+  const userName = localStorage.getItem("skema_user_name");
+  const greeting = userName ? `${timeGreeting}, ${userName}` : timeGreeting;
 
   return (
     <div className="flex flex-col h-full bg-s-bg">
@@ -145,7 +147,7 @@ export default function ChatView() {
       {/* Empty state */}
       {messages.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center px-4 pb-40">
-          <img src="/logo-skema.png" alt="SKEMA" className="h-10 w-auto mb-6 opacity-80" />
+          <img src="/hormiga-skema.png" alt="SKEMA" className="h-20 w-auto mb-6 opacity-90" />
           <h1 className="text-s-text text-2xl font-light mb-1">{greeting}</h1>
           <p className="text-s-muted text-sm mb-8">¿En qué puedo ayudarte hoy?</p>
           <div className="flex flex-wrap gap-2 justify-center max-w-lg">
