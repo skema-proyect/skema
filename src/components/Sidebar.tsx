@@ -110,7 +110,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         <div className="flex items-center gap-1">
           <button
             onClick={() => { onNewChat(); onClose?.(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] bg-s-sidebar-hover text-s-sidebar-text hover:opacity-80 transition-opacity"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[15px] bg-s-sidebar-hover text-s-sidebar-text hover:opacity-80 transition-opacity"
             title="Nuevo chat"
           >
             <Plus size={14} /> Nuevo chat
@@ -125,13 +125,13 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
 
       {/* Servicios rápidos */}
       <div className="px-3 py-3 border-b border-s-sidebar-border">
-        <p className="text-[10px] uppercase tracking-widest text-s-sidebar-muted mb-2 px-1">Servicios</p>
+        <p className="text-[12px] uppercase tracking-widest text-s-sidebar-muted mb-2 px-1">Servicios</p>
         <div className="space-y-0.5">
           {SERVICES.map(({ icon: Icon, label, prompt }) => (
             <button
               key={label}
               onClick={() => { onServiceSelect(prompt); onClose?.(); }}
-              className="w-full flex items-center gap-2.5 px-2 py-2 rounded text-[12px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors text-left"
+              className="w-full flex items-center gap-2.5 px-2 py-2.5 rounded text-[15px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors text-left"
             >
               <Icon size={13} className="flex-shrink-0" />
               {label}
@@ -146,7 +146,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         {/* Projects */}
         <div>
           <div className="flex items-center justify-between px-2 mb-1">
-            <span className="text-[10px] uppercase tracking-widest text-s-sidebar-muted font-medium">Proyectos</span>
+            <span className="text-[12px] uppercase tracking-widest text-s-sidebar-muted font-medium">Proyectos</span>
             <button onClick={() => setNewProj(v => !v)} className="p-0.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted">
               <Plus size={13} />
             </button>
@@ -158,13 +158,13 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
                 autoFocus value={newName} onChange={e => setNewName(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") createProject(); if (e.key === "Escape") setNewProj(false); }}
                 placeholder="Nombre del proyecto"
-                className="w-full bg-s-sidebar-hover text-s-sidebar-text text-[12px] px-2 py-1.5 rounded outline-none placeholder:text-s-sidebar-muted"
+                className="w-full bg-s-sidebar-hover text-s-sidebar-text text-[15px] px-2 py-1.5 rounded outline-none placeholder:text-s-sidebar-muted"
               />
             </div>
           )}
 
           {allProjects.length === 0 && !newProj && (
-            <p className="px-2 text-[11px] text-s-sidebar-muted italic">Sin proyectos</p>
+            <p className="px-2 text-[14px] text-s-sidebar-muted italic">Sin proyectos</p>
           )}
 
           {allProjects.map(p => {
@@ -184,7 +184,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
                       onClick={e => e.stopPropagation()}
                     />
                   ) : (
-                    <span className="flex-1 text-[12px] truncate">{p.name}</span>
+                    <span className="flex-1 text-[15px] truncate">{p.name}</span>
                   )}
                   <div className="hidden group-hover:flex items-center gap-0.5">
                     <button onClick={e => startRename(e, p)} className="p-0.5 rounded hover:bg-white/10"><PenLine size={11} /></button>
@@ -206,7 +206,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         {/* Loose conversations */}
         {loose.length > 0 && (
           <div>
-            <p className="px-2 text-[10px] uppercase tracking-widest text-s-sidebar-muted font-medium mb-1">Recientes</p>
+            <p className="px-2 text-[12px] uppercase tracking-widest text-s-sidebar-muted font-medium mb-1">Recientes</p>
             {loose.map(c => (
               <ConvItem key={c.id} conv={c} active={currentConvId === c.id}
                 onSelect={() => { onSelectConv(c.id); navigate("/"); onClose?.(); }}
@@ -220,13 +220,13 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
       {/* Bottom nav */}
       <div className="border-t border-s-sidebar-border px-2 py-3 space-y-0.5">
         <button onClick={() => goTo("/notas")}
-          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[13px] transition-colors ${
+          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
             isActive("/notas") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
           }`}>
           <StickyNote size={15} /> Notas
         </button>
         <button onClick={() => goTo("/agenda")}
-          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[13px] transition-colors ${
+          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
             isActive("/agenda") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
           }`}>
           <Calendar size={15} /> Agenda
@@ -241,7 +241,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         )}
 
         <div className="px-2 pt-1">
-          <p className="text-[10px] text-s-sidebar-muted">SKEMA v0.1 · Piloto</p>
+          <p className="text-[12px] text-s-sidebar-muted">SKEMA v0.1 · Piloto</p>
         </div>
       </div>
     </div>
@@ -257,7 +257,7 @@ function ConvItem({ conv, active, onSelect, onDelete, indent = false }: {
     <div onClick={onSelect}
       className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${indent ? "ml-4" : ""} ${active ? "bg-s-sidebar-hover" : "hover:bg-s-sidebar-hover"}`}>
       <MessageSquare size={12} className="text-s-sidebar-muted flex-shrink-0" />
-      <span className="flex-1 text-[12px] truncate text-s-sidebar-text">{conv.title}</span>
+      <span className="flex-1 text-[15px] truncate text-s-sidebar-text">{conv.title}</span>
       <button onClick={e => onDelete(e, conv.id)}
         className="hidden group-hover:flex p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted hover:text-s-danger">
         <Trash2 size={11} />
