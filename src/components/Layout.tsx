@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
-import { conversations as convsDB } from "@/lib/storage";
 
 export default function Layout() {
   const navigate = useNavigate();
