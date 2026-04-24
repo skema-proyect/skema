@@ -91,10 +91,12 @@ async function needsRealTimeData(message) {
   const msg = await client.messages.create({
     model: MODELS.fast,
     max_tokens: 5,
-    system: "Responde únicamente YES o NO. ¿Esta pregunta requiere información actualizada, noticias recientes, precios actuales, resultados deportivos, eventos de 2024-2026, o cualquier dato que cambie con el tiempo y no esté en el conocimiento general?",
+    system: "Answer only YES or NO (in English). Does this question require real-time information, recent news, current prices, sports results, events from 2024-2026, or any data that changes over time?",
     messages: [{ role: "user", content: message }],
   });
-  return (msg.content[0]?.text ?? "").trim().toUpperCase().startsWith("Y");
+  const text = (msg.content[0]?.text ?? "").trim().toUpperCase();
+  // Accept YES, Y, SÍ, SI, S — reject NO, N
+  return !text.startsWith("N");
 }
 
 // ── Model selection ────────────────────────────────────────────────────────────
