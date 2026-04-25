@@ -28,7 +28,6 @@ export default function ChatView() {
   const [loading,        setLoading]        = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [listening,      setListening]      = useState(false);
-  const [processing,     setProcessing]     = useState(false);
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
@@ -71,6 +70,12 @@ export default function ChatView() {
   }, [currentConvId, setCurrentConvId]);
 
   const send = useCallback(async (text?: string) => {
+    // Stop mic if active and use whatever has been captured so far
+    if (listening) {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setListening(false);
+    }
     const content = (text ?? input).trim();
     if (!content || loading) return;
     setInput("");
@@ -108,7 +113,7 @@ export default function ChatView() {
       setLoading(false);
       bump();
     }
-  }, [input, loading, getOrCreateConv, bump]);
+  }, [input, loading, listening, getOrCreateConv, bump]);
 
   // Voice — Web Speech API (real-time, no backend)
   const startVoice = () => {
@@ -135,8 +140,8 @@ export default function ChatView() {
       setInput(combined);
     };
 
-    rec.onerror = () => { setListening(false); setProcessing(false); };
-    rec.onend   = () => { setListening(false); setProcessing(false); };
+    rec.onerror = () => { setListening(false); };
+    rec.onend   = () => { setListening(false); };
 
     rec.start();
     recognitionRef.current = rec;
@@ -147,7 +152,6 @@ export default function ChatView() {
     recognitionRef.current?.stop();
     recognitionRef.current = null;
     setListening(false);
-    setProcessing(true);
   };
 
   // Download SVG
@@ -230,30 +234,18 @@ export default function ChatView() {
                   const isMobile = window.matchMedia("(pointer: coarse)").matches;
                   if (e.key === "Enter" && !e.shiftKey && !isMobile) { e.preventDefault(); send(); }
                 }}
-                placeholder={listening ? "Escuchando..." : processing ? "Procesando..." : "Escribe o habla con SKEMA..."}
+                placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
                 rows={1}
                 className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
               />
             </div>
 
             {/* Circle action button */}
-            {listening ? (
-              <button
-                onClick={stopVoice}
-                className="w-12 h-12 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 animate-pulse"
-                title="Detener grabación"
-              >
-                <MicOff size={19} />
-              </button>
-            ) : processing ? (
-              <div className="w-12 h-12 rounded-full bg-black/30 flex items-center justify-center flex-shrink-0">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : input.trim() ? (
+            {(listening || input.trim()) ? (
               <button
                 onClick={() => send()}
                 disabled={loading}
-                className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 disabled:opacity-30 transition-opacity"
+                className={`w-12 h-12 rounded-full text-white flex items-center justify-center flex-shrink-0 transition-all ${listening ? "bg-red-500 animate-pulse" : "bg-black hover:opacity-75 disabled:opacity-30"}`}
                 title="Enviar"
               >
                 <Send size={19} />
