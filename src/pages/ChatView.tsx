@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, MicOff, Square, PenTool, BookOpen, FileText, Search, Download } from "lucide-react";
+import { Send, Mic, Square, PenTool, BookOpen, FileText, Search, Download } from "lucide-react";
 import { conversations as convsDB } from "@/lib/storage";
 import type { Message } from "@/types";
 
@@ -146,12 +146,6 @@ export default function ChatView() {
     rec.start();
     recognitionRef.current = rec;
     setListening(true);
-  };
-
-  const stopVoice = () => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    setListening(false);
   };
 
   // Download SVG
