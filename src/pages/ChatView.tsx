@@ -28,11 +28,9 @@ export default function ChatView() {
   const [loading,        setLoading]        = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [listening,      setListening]      = useState(false);
-  const [transcribing,   setTranscribing]   = useState(false);
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const mediaRef    = useRef<MediaRecorder | null>(null);
-  const chunksRef   = useRef<Blob[]>([]);
+  const bottomRef        = useRef<HTMLDivElement>(null);
+  const textareaRef      = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef   = useRef<SpeechRecognition | null>(null);
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -111,42 +109,42 @@ export default function ChatView() {
     }
   }, [input, loading, getOrCreateConv, bump]);
 
-  // Voice recording
-  const startVoice = async () => {
-    try {
-      const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      chunksRef.current = [];
-      recorder.ondataavailable = e => chunksRef.current.push(e.data);
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setTranscribing(true);
-        const blob   = new Blob(chunksRef.current, { type: "audio/webm" });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const b64 = (reader.result as string).split(",")[1];
-          try {
-            const res  = await fetch("/api/transcribe", {
-              method:  "POST",
-              headers: { "Content-Type": "application/json" },
-              body:    JSON.stringify({ audioBase64: b64, mimeType: "audio/webm" }),
-            });
-            const data = await res.json();
-            if (data.transcript) setInput(p => p ? p + " " + data.transcript : data.transcript);
-          } catch { /* silently fail */ } finally {
-            setTranscribing(false);
-          }
-        };
-        reader.readAsDataURL(blob);
-      };
-      recorder.start();
-      mediaRef.current = recorder;
-      setListening(true);
-    } catch { /* microphone denied */ }
+  // Voice — Web Speech API (real-time, no backend)
+  const startVoice = () => {
+    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
+
+    const rec = new SR() as SpeechRecognition;
+    rec.lang = "es-ES";
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    // Text confirmed before mic was activated + accumulated finals during session
+    const prefix = input.trim();
+    let finals = "";
+
+    rec.onresult = (e: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finals += (finals ? " " : "") + t.trim();
+        else interim += t;
+      }
+      const combined = [prefix, finals, interim].filter(Boolean).join(" ");
+      setInput(combined);
+    };
+
+    rec.onerror = () => { setListening(false); };
+    rec.onend   = () => { setListening(false); };
+
+    rec.start();
+    recognitionRef.current = rec;
+    setListening(true);
   };
 
   const stopVoice = () => {
-    mediaRef.current?.stop();
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
     setListening(false);
   };
 
@@ -230,7 +228,7 @@ export default function ChatView() {
                   const isMobile = window.matchMedia("(pointer: coarse)").matches;
                   if (e.key === "Enter" && !e.shiftKey && !isMobile) { e.preventDefault(); send(); }
                 }}
-                placeholder={listening ? "Escuchando..." : transcribing ? "Transcribiendo..." : "Escribe o habla con SKEMA..."}
+                placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
                 rows={1}
                 className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
               />
@@ -254,10 +252,6 @@ export default function ChatView() {
               >
                 <MicOff size={19} />
               </button>
-            ) : transcribing ? (
-              <div className="w-12 h-12 rounded-full bg-black/30 flex items-center justify-center flex-shrink-0">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              </div>
             ) : (
               <button
                 onClick={startVoice}
