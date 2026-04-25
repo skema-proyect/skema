@@ -24,9 +24,10 @@ export default function ChatView() {
   const conv      = currentConvId ? convsDB.get(currentConvId) : null;
   const messages  = conv?.messages ?? [];
 
-  const [input,       setInput]       = useState("");
-  const [loading,     setLoading]     = useState(false);
-  const [listening,   setListening]   = useState(false);
+  const [input,          setInput]          = useState("");
+  const [loading,        setLoading]        = useState(false);
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
+  const [listening,      setListening]      = useState(false);
   const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mediaRef    = useRef<MediaRecorder | null>(null);
@@ -41,6 +42,13 @@ export default function ChatView() {
       window.history.replaceState({}, "");
     }
   }, [location.state]);
+
+  // Contador de segundos mientras carga
+  useEffect(() => {
+    if (!loading) { setLoadingSeconds(0); return; }
+    const interval = setInterval(() => setLoadingSeconds(s => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   // Auto-scroll
   useEffect(() => {
@@ -188,7 +196,15 @@ export default function ChatView() {
                 <img src="/logo-skema.png" alt="" className="w-4 h-4 invert" />
               </div>
               <div className="pt-1">
-                <TypingDots />
+                {loadingSeconds < 3 ? (
+                  <TypingDots />
+                ) : loadingSeconds < 10 ? (
+                  <LoadingText text="Buscando información actualizada..." />
+                ) : loadingSeconds < 30 ? (
+                  <LoadingText text="Analizando fuentes..." />
+                ) : (
+                  <LoadingText text="Investigando en profundidad... puede tardar hasta un minuto" />
+                )}
               </div>
             </div>
           )}
@@ -288,12 +304,21 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
         )}
         {m.model && (
           <span className="text-[10px] text-s-muted">
-            {m.model.includes("haiku") ? "Haiku" : "Sonnet"}
+            {m.model.includes("perplexity") ? "Perplexity"
+              : m.model.includes("haiku") ? "Haiku"
+              : "Sonnet"}
             {m.tool && m.tool !== "chat" ? ` · ${m.tool}` : ""}
           </span>
         )}
       </div>
     </div>
+  );
+}
+
+// ── Loading text ───────────────────────────────────────────────────────────────
+function LoadingText({ text }: { text: string }) {
+  return (
+    <p className="text-[13px] text-s-muted italic animate-pulse">{text}</p>
   );
 }
 

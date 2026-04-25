@@ -7,6 +7,7 @@ const MODELS = {
   smart: "claude-sonnet-4-6",
 };
 
+// ── Claude system prompts ──────────────────────────────────────────────────────
 const SYSTEM = `Eres SKEMA, asistente personal de dirección de un Ingeniero Director Administrativo en Gran Canaria.
 
 Eres un asistente generalista de primer nivel: puedes responder cualquier pregunta sobre cualquier tema — arquitectura, ingeniería, derecho, economía, historia, ciencia, tecnología, política, cultura, medicina, y todo lo demás. No tienes restricciones temáticas.
@@ -38,14 +39,6 @@ Genera documentos profesionales estructurados.
 Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
-const SEARCH_SYSTEM = `${SYSTEM}
-
-MODO BÚSQUEDA ACTIVO:
-Se te proporcionan resultados de búsqueda web en tiempo real.
-Usa esa información como base principal de tu respuesta.
-Cita las fuentes con el formato [Fuente: nombre del sitio] al final de los párrafos relevantes.
-Si los resultados no responden bien la pregunta, indícalo y complementa con tu conocimiento.`;
-
 const SKETCH_SYSTEM = `Eres un generador de planos esquemáticos SVG para un estudio de arquitectura.
 Responde ÚNICAMENTE con el código SVG. Sin explicación, sin markdown.
 Viewport 800x600. viewBox="0 0 800 600".
@@ -54,23 +47,81 @@ Etiquetas: font-family monospace, font-size 11px, color #333.
 Incluye cotas exteriores y escala gráfica.
 Si hay orientación, añade símbolo N en esquina superior derecha.`;
 
-// ── Web search via Tavily ──────────────────────────────────────────────────────
-async function searchWeb(query) {
-  const res = await fetch("https://api.tavily.com/search", {
+// ── Perplexity system prompts ──────────────────────────────────────────────────
+const PERPLEXITY_SIMPLE = `Eres SKEMA, asistente personal de dirección. Responde en español con información actualizada de internet.
+Usa 3-5 fuentes relevantes. Sé conciso y directo.
+Si no encuentras información relevante en las primeras búsquedas, detente y pide al usuario más detalles en lugar de seguir buscando.`;
+
+const PERPLEXITY_COMPLEX = `Eres SKEMA, asistente personal de dirección. Responde en español con información actualizada y rigurosa.
+Prioriza fuentes autorizadas (boletines oficiales, revistas técnicas, organismos públicos). Máximo 7 fuentes.
+Estructura la respuesta con claridad y cita las fuentes al final.
+Si no encuentras información relevante en las primeras búsquedas, detente y pide al usuario más detalles.`;
+
+const PERPLEXITY_DEEP = `Eres SKEMA, asistente experto en arquitectura, ingeniería y dirección empresarial en Gran Canaria.
+Realiza un análisis profundo usando máximo 10 fuentes autorizadas (BOE, BOCA, revistas técnicas indexadas, organismos oficiales, universidades).
+Genera un informe técnico estructurado con: resumen ejecutivo, análisis detallado por bloques, conclusiones y fuentes.
+Si tras las primeras búsquedas no encuentras información relevante y autorizada, detente y comunica al usuario que necesitas más detalles en lugar de continuar buscando indefinidamente.
+Responde siempre en español.`;
+
+// ── Perplexity search ──────────────────────────────────────────────────────────
+async function searchPerplexity(query, mode) {
+  const configs = {
+    SIMPLE:  { model: "sonar",               max_tokens: 600,  search_context_size: "low",    system: PERPLEXITY_SIMPLE  },
+    COMPLEX: { model: "sonar-pro",            max_tokens: 1000, search_context_size: "medium", system: PERPLEXITY_COMPLEX },
+    DEEP:    { model: "sonar-deep-research",  max_tokens: 2500,                                system: PERPLEXITY_DEEP   },
+  };
+
+  const cfg = configs[mode] ?? configs.SIMPLE;
+  const body = {
+    model: cfg.model,
+    messages: [
+      { role: "system", content: cfg.system },
+      { role: "user",   content: query },
+    ],
+    max_tokens: cfg.max_tokens,
+  };
+  if (cfg.search_context_size) body.search_context_size = cfg.search_context_size;
+
+  const res = await fetch("https://api.perplexity.ai/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      api_key: process.env.TAVILY_API_KEY,
-      query,
-      search_depth: "basic",
-      max_results: 5,
-      include_answer: true,
-    }),
+    headers: {
+      Authorization:  `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
-  return res.json();
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? "";
 }
 
-// ── Intent detection ───────────────────────────────────────────────────────────
+// ── Query classifier ───────────────────────────────────────────────────────────
+async function classifyQuery(message, forceMinComplex = false) {
+  const msg = await client.messages.create({
+    model: MODELS.fast,
+    max_tokens: 10,
+    system: `Classify the user query into exactly one category. Reply with only the category name, nothing else.
+
+NO      — answerable from general knowledge, no current/real-time data needed
+SIMPLE  — needs current data, simple answer (sports scores, today's prices, weather, brief news)
+COMPLEX — needs current web data, single topic, moderate depth
+DEEP    — needs multi-source research, comparing topics, technical/regulatory analysis, structured report`,
+    messages: [{ role: "user", content: message }],
+  });
+
+  const text = (msg.content[0]?.text ?? "").trim().toUpperCase();
+  let result = "NO";
+  if      (text.includes("DEEP"))    result = "DEEP";
+  else if (text.includes("COMPLEX")) result = "COMPLEX";
+  else if (text.includes("SIMPLE"))  result = "SIMPLE";
+
+  // Investigar button always gets at least COMPLEX
+  if (forceMinComplex && (result === "NO" || result === "SIMPLE")) result = "COMPLEX";
+
+  return result;
+}
+
+// ── Intent detection (structured tasks) ───────────────────────────────────────
 function detectIntent(message) {
   if (
     /\b(plano|planta|croquis|esquema)\b/i.test(message) &&
@@ -86,29 +137,13 @@ function detectIntent(message) {
   return "chat";
 }
 
-// ── Router inteligente: ¿necesita datos en tiempo real? ───────────────────────
-async function needsRealTimeData(message) {
-  const msg = await client.messages.create({
-    model: MODELS.fast,
-    max_tokens: 5,
-    system: "Answer only YES or NO (in English). Does this question require real-time information, recent news, current prices, sports results, events from 2024-2026, or any data that changes over time?",
-    messages: [{ role: "user", content: message }],
-  });
-  const text = (msg.content[0]?.text ?? "").trim().toUpperCase();
-  // Accept YES, Y, SÍ, SI, S — reject NO, N
-  return !text.startsWith("N");
-}
-
-// ── Model selection ────────────────────────────────────────────────────────────
-function selectModel(message, intent) {
-  if (intent !== "chat") return MODELS.smart;
-
+// ── Model selection (Claude only) ──────────────────────────────────────────────
+function selectModel(message) {
   let score = 0;
   if (message.length > 150) score += 2;
   if (message.length > 350) score += 2;
   if (/analiza|explica|desarrolla|compara|evalúa|justifica|razona|diferencia/i.test(message)) score += 2;
   if (/proyecto|técnico|arquitectura|ingeniería|estructura|presupuesto/i.test(message)) score += 1;
-
   return score >= 3 ? MODELS.smart : MODELS.fast;
 }
 
@@ -122,18 +157,14 @@ export default async function handler(req, res) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
 
-  const intent = detectIntent(lastUser.content);
-  const model  = selectModel(lastUser.content, intent);
-
-  // Prepare history (strip internal fields, keep role+content)
+  const intent  = detectIntent(lastUser.content);
   const history = messages.map(m => ({ role: m.role, content: m.content }));
 
   try {
     // ── Sketch ──
     if (intent === "sketch") {
       const msg = await client.messages.create({
-        model: MODELS.smart,
-        max_tokens: 4096,
+        model: MODELS.smart, max_tokens: 4096,
         system: SKETCH_SYSTEM,
         messages: [{ role: "user", content: lastUser.content }],
       });
@@ -145,10 +176,8 @@ export default async function handler(req, res) {
     // ── Normativa ──
     if (intent === "normativa") {
       const msg = await client.messages.create({
-        model: MODELS.smart,
-        max_tokens: 2048,
-        system: NORMATIVA_SYSTEM,
-        messages: history,
+        model: MODELS.smart, max_tokens: 2048,
+        system: NORMATIVA_SYSTEM, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "normativa", model: MODELS.smart });
     }
@@ -156,38 +185,27 @@ export default async function handler(req, res) {
     // ── Document ──
     if (intent === "document") {
       const msg = await client.messages.create({
-        model: MODELS.smart,
-        max_tokens: 3000,
-        system: DOCUMENT_SYSTEM,
-        messages: history,
+        model: MODELS.smart, max_tokens: 3000,
+        system: DOCUMENT_SYSTEM, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
     }
 
-    // ── General chat — router inteligente ──
-    const needsSearch = await needsRealTimeData(lastUser.content);
+    // ── General chat — router ──
+    const isInvestigar = lastUser.content.startsWith("Busca información actualizada sobre ");
+    const classification = await classifyQuery(lastUser.content, isInvestigar);
 
-    if (needsSearch) {
-      const searchData = await searchWeb(lastUser.content);
-      const snippets = (searchData.results ?? [])
-        .slice(0, 5)
-        .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.content}`)
-        .join("\n\n");
-      const augmented = `Pregunta del usuario: ${lastUser.content}\n\nResultados de búsqueda web en tiempo real:\n${snippets}`;
-      const msg = await client.messages.create({
-        model: MODELS.smart,
-        max_tokens: 2048,
-        system: SEARCH_SYSTEM,
-        messages: [{ role: "user", content: augmented }],
-      });
-      return res.json({ content: msg.content[0]?.text ?? "", tool: "search", model: MODELS.smart });
+    if (classification !== "NO") {
+      const content = await searchPerplexity(lastUser.content, classification);
+      const tool    = classification === "DEEP" ? "research" : "search";
+      return res.json({ content, tool, model: `perplexity-${classification.toLowerCase()}` });
     }
 
-    const msg = await client.messages.create({
-      model,
-      max_tokens: 1500,
-      system: SYSTEM,
-      messages: history,
+    // ── Claude chat ──
+    const model = selectModel(lastUser.content);
+    const msg   = await client.messages.create({
+      model, max_tokens: 1500,
+      system: SYSTEM, messages: history,
     });
     return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model });
 
