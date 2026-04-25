@@ -13,7 +13,7 @@ interface OutletCtx {
 
 const CHIPS = [
   { icon: PenTool,  label: "Generar plano",        prompt: "Genera un plano de " },
-  { icon: BookOpen, label: "Consultar normativa",   prompt: "¿Cuál es la normativa en Gran Canaria sobre " },
+  { icon: BookOpen, label: "Consultar normativa",   prompt: "Normativa sobre " },
   { icon: FileText, label: "Redactar documento",    prompt: "Redacta un informe de " },
   { icon: Search,   label: "Investigar",            prompt: "Busca información actualizada sobre " },
 ];
