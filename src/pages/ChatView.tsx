@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, Square, PenTool, BookOpen, FileText, Search, Download } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { conversations as convsDB } from "@/lib/storage";
 import type { Message } from "@/types";
 
@@ -194,9 +195,7 @@ export default function ChatView() {
           ))}
           {loading && (
             <div className="flex gap-3 max-w-2xl">
-              <div className="w-7 h-7 rounded-full bg-s-accent flex-shrink-0 flex items-center justify-center">
-                <img src="/logo-skema.png" alt="" className="w-4 h-4 invert" />
-              </div>
+              <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
               <div className="pt-1">
                 {loadingSeconds < 3 ? (
                   <TypingDots />
@@ -279,7 +278,9 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
     <div className="flex gap-3 max-w-2xl">
       <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
-        <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed whitespace-pre-wrap">{m.content}</div>
+        <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-headings:text-s-text prose-strong:text-s-text prose-li:my-0.5">
+          <ReactMarkdown>{m.content}</ReactMarkdown>
+        </div>
         {m.svg && (
           <div className="border border-s-border rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-s-border bg-s-surface">
