@@ -214,12 +214,12 @@ async function upsertRecord(isla, municipio, tipoDocumento, parsed) {
     municipio,
     tipo_documento: tipoDocumento,
     nombre_oficial: parsed.nombre_oficial ?? null,
-    fecha_boc: parsed.fecha_boc ?? null,
+    fecha_boc: null,
     url_descarga: parsed.url_descarga ?? null,
     fuente: parsed.fuente ?? "Perplexity sonar-pro",
     es_texto_refundido: false,
     verificado: false,
-    notas: parsed.notas ?? null,
+    notas: [parsed.fecha_boc, parsed.notas].filter(Boolean).join(" | ").slice(0, 1000) || null,
     updated_at: new Date().toISOString(),
   };
 
