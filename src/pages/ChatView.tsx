@@ -283,9 +283,7 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
 
   return (
     <div className="flex gap-3 max-w-2xl">
-      <div className="w-7 h-7 rounded-full bg-s-accent flex-shrink-0 flex items-center justify-center mt-0.5">
-        <img src="/logo-skema.png" alt="" className="w-4 h-4 invert" />
-      </div>
+      <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
         <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed whitespace-pre-wrap">{m.content}</div>
         {m.svg && (
