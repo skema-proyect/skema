@@ -3,18 +3,11 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   Plus, ChevronDown, ChevronRight,
   MessageSquare, FolderOpen, Trash2,
-  StickyNote, Calendar, PenLine, X,
-  PenTool, BookOpen, FileText, Search, Download,
+  StickyNote, Calendar, PenLine, X, Download,
 } from "lucide-react";
 import { projects as projectsDB, conversations as convsDB } from "@/lib/storage";
+import { SERVICES } from "@/constants/services";
 import type { Project, Conversation } from "@/types";
-
-const SERVICES = [
-  { icon: PenTool,  label: "Generar plano",      prompt: "Genera un plano de " },
-  { icon: BookOpen, label: "Consultar normativa", prompt: "Normativa sobre " },
-  { icon: FileText, label: "Redactar documento",  prompt: "Redacta un informe de " },
-  { icon: Search,   label: "Investigar",          prompt: "Busca información actualizada sobre " },
-];
 
 interface Props {
   currentConvId: string | null;

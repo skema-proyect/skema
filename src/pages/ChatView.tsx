@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Square, PenTool, BookOpen, FileText, Search, Download } from "lucide-react";
+import { Send, Mic, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { conversations as convsDB } from "@/lib/storage";
+import { SERVICES } from "@/constants/services";
 import type { Message } from "@/types";
 
 interface OutletCtx {
@@ -10,13 +11,6 @@ interface OutletCtx {
   setCurrentConvId: (id: string) => void;
   bump: () => void;
 }
-
-const CHIPS = [
-  { icon: PenTool,  label: "Generar plano",        prompt: "Genera un plano de " },
-  { icon: BookOpen, label: "Consultar normativa",   prompt: "Normativa sobre " },
-  { icon: FileText, label: "Redactar documento",    prompt: "Redacta un informe de " },
-  { icon: Search,   label: "Investigar",            prompt: "Busca información actualizada sobre " },
-];
 
 export default function ChatView() {
   const { currentConvId, setCurrentConvId, bump } = useOutletContext<OutletCtx>();
@@ -173,7 +167,7 @@ export default function ChatView() {
           <h1 className="text-s-text text-2xl font-light mb-1">{greeting}</h1>
           <p className="text-s-muted text-sm mb-5">¿En qué puedo ayudarte hoy?</p>
           <div className="flex flex-wrap gap-2 justify-center max-w-lg">
-            {CHIPS.map(({ icon: Icon, label, prompt }) => (
+            {SERVICES.map(({ icon: Icon, label, prompt }) => (
               <button
                 key={label}
                 onClick={() => setInput(prompt)}
@@ -330,6 +324,3 @@ function TypingDots() {
   );
 }
 
-// Prevent unused import warning
-const _StopIcon = Square;
-void _StopIcon;
