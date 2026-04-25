@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createClient } from "@supabase/supabase-js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 const MODELS = {
   fast:  "claude-haiku-4-5-20251001",
@@ -121,6 +126,38 @@ DEEP    — needs multi-source research, comparing topics, technical/regulatory 
   return result;
 }
 
+// ── Supabase normativa lookup ──────────────────────────────────────────────────
+async function lookupNormativa(message) {
+  if (!supabase) return null;
+
+  // Extract municipality name from the query using a simple heuristic
+  // Matches patterns like "normativa de X", "PGOU de X", "ordenanzas de X", etc.
+  const municipioMatch = message.match(
+    /(?:normativa|pgou?|ordenanza|plan\s+(?:general|especial|parcial)|licencia|urbanismo|edificaci[oó]n|retranqueo|altura)\s+(?:de|en|del?)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]+?)(?:\s*[,.(]|$)/i
+  );
+  if (!municipioMatch) return null;
+
+  const municipioRaw = municipioMatch[1].trim();
+
+  const { data, error } = await supabase
+    .from("normativa_canarias")
+    .select("isla, municipio, tipo_documento, nombre_oficial, fecha_boc, url_descarga, notas, verificado")
+    .ilike("municipio", `%${municipioRaw}%`)
+    .order("tipo_documento");
+
+  if (error || !data || data.length === 0) return null;
+
+  // Format as context block for Claude
+  const lines = data.map(r =>
+    `• ${r.tipo_documento}: ${r.nombre_oficial ?? "Sin nombre registrado"}` +
+    (r.fecha_boc ? ` (${r.fecha_boc})` : "") +
+    (r.url_descarga ? ` — ${r.url_descarga}` : "") +
+    (r.notas ? ` [${r.notas.slice(0, 120)}]` : "")
+  );
+
+  return `[BASE DE DATOS NORMATIVA — ${data[0].municipio}, ${data[0].isla}]\n${lines.join("\n")}`;
+}
+
 // ── Intent detection (structured tasks) ───────────────────────────────────────
 function detectIntent(message) {
   if (
@@ -175,9 +212,15 @@ export default async function handler(req, res) {
 
     // ── Normativa ──
     if (intent === "normativa") {
+      // Enrich with local database if available
+      const dbContext = await lookupNormativa(lastUser.content);
+      const system = dbContext
+        ? `${NORMATIVA_SYSTEM}\n\n${dbContext}`
+        : NORMATIVA_SYSTEM;
+
       const msg = await client.messages.create({
         model: MODELS.smart, max_tokens: 2048,
-        system: NORMATIVA_SYSTEM, messages: history,
+        system, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "normativa", model: MODELS.smart });
     }

@@ -1,0 +1,43 @@
+name: Populate Normativa Canarias
+
+on:
+  schedule:
+    # First day of every month at 03:00 UTC
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+    inputs:
+      isla:
+        description: "Isla específica (dejar vacío para todas)"
+        required: false
+        default: ""
+      mode:
+        description: "Mode: full | update (only missing records)"
+        required: false
+        default: "update"
+
+jobs:
+  populate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run population script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          TARGET_ISLA: ${{ github.event.inputs.isla || '' }}
+          RUN_MODE: ${{ github.event.inputs.mode || 'update' }}
+        run: node scripts/populate-normativa.js
