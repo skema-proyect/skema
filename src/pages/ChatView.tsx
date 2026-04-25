@@ -30,7 +30,7 @@ export default function ChatView() {
   const [listening,      setListening]      = useState(false);
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef   = useRef<SpeechRecognition | null>(null);
+  const recognitionRef   = useRef<any>(null);
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -114,7 +114,7 @@ export default function ChatView() {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
-    const rec = new SR() as SpeechRecognition;
+    const rec = new SR();
     rec.lang = "es-ES";
     rec.continuous = true;
     rec.interimResults = true;
