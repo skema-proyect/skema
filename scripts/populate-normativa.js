@@ -223,11 +223,26 @@ async function upsertRecord(isla, municipio, tipoDocumento, parsed) {
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase
+  // Check if record exists, then update or insert
+  const { data: existing } = await supabase
     .from("normativa_canarias")
-    .upsert(record, { onConflict: "municipio,tipo_documento" });
+    .select("id")
+    .eq("municipio", municipio)
+    .eq("tipo_documento", tipoDocumento)
+    .limit(1);
 
-  if (error) throw error;
+  if (existing && existing.length > 0) {
+    const { error } = await supabase
+      .from("normativa_canarias")
+      .update(record)
+      .eq("id", existing[0].id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase
+      .from("normativa_canarias")
+      .insert(record);
+    if (error) throw error;
+  }
 }
 
 // ── Sleep helper ──────────────────────────────────────────────────────────────
