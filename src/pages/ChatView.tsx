@@ -28,6 +28,7 @@ export default function ChatView() {
   const [loading,        setLoading]        = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [listening,      setListening]      = useState(false);
+  const [processing,     setProcessing]     = useState(false);
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
@@ -134,8 +135,8 @@ export default function ChatView() {
       setInput(combined);
     };
 
-    rec.onerror = () => { setListening(false); };
-    rec.onend   = () => { setListening(false); };
+    rec.onerror = () => { setListening(false); setProcessing(false); };
+    rec.onend   = () => { setListening(false); setProcessing(false); };
 
     rec.start();
     recognitionRef.current = rec;
@@ -146,6 +147,7 @@ export default function ChatView() {
     recognitionRef.current?.stop();
     recognitionRef.current = null;
     setListening(false);
+    setProcessing(true);
   };
 
   // Download SVG
@@ -228,14 +230,26 @@ export default function ChatView() {
                   const isMobile = window.matchMedia("(pointer: coarse)").matches;
                   if (e.key === "Enter" && !e.shiftKey && !isMobile) { e.preventDefault(); send(); }
                 }}
-                placeholder={listening ? "Escuchando..." : "Escribe o habla con SKEMA..."}
+                placeholder={listening ? "Escuchando..." : processing ? "Procesando..." : "Escribe o habla con SKEMA..."}
                 rows={1}
                 className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
               />
             </div>
 
             {/* Circle action button */}
-            {input.trim() ? (
+            {listening ? (
+              <button
+                onClick={stopVoice}
+                className="w-12 h-12 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 animate-pulse"
+                title="Detener grabación"
+              >
+                <MicOff size={19} />
+              </button>
+            ) : processing ? (
+              <div className="w-12 h-12 rounded-full bg-black/30 flex items-center justify-center flex-shrink-0">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : input.trim() ? (
               <button
                 onClick={() => send()}
                 disabled={loading}
@@ -243,14 +257,6 @@ export default function ChatView() {
                 title="Enviar"
               >
                 <Send size={19} />
-              </button>
-            ) : listening ? (
-              <button
-                onClick={stopVoice}
-                className="w-12 h-12 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0 animate-pulse"
-                title="Detener grabación"
-              >
-                <MicOff size={19} />
               </button>
             ) : (
               <button
