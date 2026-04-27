@@ -475,10 +475,14 @@ INSTRUCCIÓN CRÍTICA para cambios:
 5. No añadas ni quites habitaciones salvo que se pida explícitamente`
         : ARCHITECT_SYSTEM;
 
+      // When refining an existing plan, only send the last 6 messages to the architect
+      // — avoids confusion between old change rounds and the current request
+      const archHistory = prevSpecJSON ? cleanHistory.slice(-6) : cleanHistory;
+
       const archMsg = await client.messages.create({
         model: MODELS.smart, max_tokens: 1500,
         system: archSystem,
-        messages: cleanHistory,
+        messages: archHistory,
       });
       const archResponse = archMsg.content[0]?.text ?? "";
 
