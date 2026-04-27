@@ -131,9 +131,14 @@ export default function ChatView() {
         if (e.error === "not-allowed") { recognitionRef.current = null; setListening(false); setVoiceText(""); }
       };
 
-      // When session ends, restart with a fresh instance if user hasn't cancelled
+      // When session ends, restart with a fresh instance after a short pause
+      // (mobile Chrome fires onend almost instantly — delay prevents rapid loop)
       rec.onend = () => {
-        if (recognitionRef.current !== null) launchRec();
+        if (recognitionRef.current !== null) {
+          setTimeout(() => {
+            if (recognitionRef.current !== null) launchRec();
+          }, 350);
+        }
       };
 
       rec.start();
