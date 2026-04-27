@@ -27,6 +27,8 @@ export default function ChatView() {
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
+  const voiceActiveRef   = useRef(false);
+  const voiceAccumRef    = useRef("");
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -105,48 +107,68 @@ export default function ChatView() {
     }
   }, [input, loading, getOrCreateConv, bump]);
 
-  // Voice — Gemini-style overlay with Web Speech API
+  // Voice — Gemini-style overlay, auto-restart between phrases
   const startVoice = () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
-    // Small delay so browser fully releases mic from previous session
-    setTimeout(() => {
+    const createAndStart = () => {
+      if (!voiceActiveRef.current) return;
       const rec = new SR();
       rec.lang = "es-ES";
-      rec.continuous = true;
+      rec.continuous = false;      // single utterance — no repetition bug
       rec.interimResults = false;
+      rec.maxAlternatives = 1;
 
       rec.onresult = (e: SpeechRecognitionEvent) => {
-        // Always read ALL final results from scratch — prevents repetition bug
-        let text = "";
-        for (let i = 0; i < e.results.length; i++) {
-          if (e.results[i].isFinal) text += e.results[i][0].transcript + " ";
+        const phrase = Array.from(e.results as any)
+          .map((r: any) => r[0].transcript)
+          .join(" ")
+          .trim();
+        if (phrase) {
+          voiceAccumRef.current = voiceAccumRef.current
+            ? voiceAccumRef.current + " " + phrase
+            : phrase;
+          setVoiceText(voiceAccumRef.current);
         }
-        setVoiceText(text.trim());
       };
 
       rec.onerror = (e: any) => {
-        if (e.error !== "no-speech") setListening(false);
+        if (e.error === "aborted") return; // intentional stop
+        // no-speech / network: let onend restart
       };
-      rec.onend = () => { /* keep overlay open — user presses send or cancel */ };
 
-      rec.start();
-      recognitionRef.current = rec;
-      setVoiceText("");
-      setListening(true);
-    }, 150);
+      rec.onend = () => {
+        // Restart automatically while overlay is open
+        if (voiceActiveRef.current) setTimeout(createAndStart, 80);
+      };
+
+      try {
+        rec.start();
+        recognitionRef.current = rec;
+      } catch {
+        if (voiceActiveRef.current) setTimeout(createAndStart, 300);
+      }
+    };
+
+    voiceActiveRef.current = true;
+    voiceAccumRef.current = "";
+    setVoiceText("");
+    setListening(true);
+    createAndStart();
   };
 
   const cancelVoice = () => {
-    recognitionRef.current?.stop();
+    voiceActiveRef.current = false;
+    recognitionRef.current?.abort();
     recognitionRef.current = null;
     setListening(false);
     setVoiceText("");
   };
 
   const sendVoice = () => {
-    recognitionRef.current?.stop();
+    voiceActiveRef.current = false;
+    recognitionRef.current?.abort();
     recognitionRef.current = null;
     const text = voiceText.trim();
     setListening(false);
