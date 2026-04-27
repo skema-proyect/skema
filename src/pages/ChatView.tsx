@@ -110,41 +110,43 @@ export default function ChatView() {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
-    const rec = new SR();
-    rec.lang = "es-ES";
-    rec.continuous = false;   // no repetition bug
-    rec.interimResults = false;
+    // Small delay so browser fully releases mic from previous session
+    setTimeout(() => {
+      const rec = new SR();
+      rec.lang = "es-ES";
+      rec.continuous = true;
+      rec.interimResults = false;
 
-    let captured = "";
+      rec.onresult = (e: SpeechRecognitionEvent) => {
+        // Always read ALL final results from scratch — prevents repetition bug
+        let text = "";
+        for (let i = 0; i < e.results.length; i++) {
+          if (e.results[i].isFinal) text += e.results[i][0].transcript + " ";
+        }
+        setVoiceText(text.trim());
+      };
 
-    rec.onresult = (e: SpeechRecognitionEvent) => {
-      captured = Array.from(e.results)
-        .map(r => r[0].transcript)
-        .join(" ")
-        .trim();
-      setVoiceText(captured);
-    };
+      rec.onerror = (e: any) => {
+        if (e.error !== "no-speech") setListening(false);
+      };
+      rec.onend = () => { /* keep overlay open — user presses send or cancel */ };
 
-    rec.onerror = () => { setListening(false); };
-    rec.onend   = () => {
-      // keep overlay open so user can hit send or cancel
-    };
-
-    rec.start();
-    recognitionRef.current = rec;
-    setVoiceText("");
-    setListening(true);
+      rec.start();
+      recognitionRef.current = rec;
+      setVoiceText("");
+      setListening(true);
+    }, 150);
   };
 
   const cancelVoice = () => {
-    recognitionRef.current?.abort();
+    recognitionRef.current?.stop();
     recognitionRef.current = null;
     setListening(false);
     setVoiceText("");
   };
 
   const sendVoice = () => {
-    recognitionRef.current?.abort();
+    recognitionRef.current?.stop();
     recognitionRef.current = null;
     const text = voiceText.trim();
     setListening(false);
