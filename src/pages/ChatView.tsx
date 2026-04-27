@@ -27,8 +27,6 @@ export default function ChatView() {
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
-  const voiceActiveRef   = useRef(false);
-  const voiceAccumRef    = useRef("");
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -107,68 +105,46 @@ export default function ChatView() {
     }
   }, [input, loading, getOrCreateConv, bump]);
 
-  // Voice — Gemini-style overlay, auto-restart between phrases
+  // Voice — Gemini-style overlay
   const startVoice = () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
-    const createAndStart = () => {
-      if (!voiceActiveRef.current) return;
-      const rec = new SR();
-      rec.lang = "es-ES";
-      rec.continuous = false;      // single utterance — no repetition bug
-      rec.interimResults = false;
-      rec.maxAlternatives = 1;
+    const rec = new SR();
+    rec.lang = "es-ES";
+    rec.continuous = true;
+    rec.interimResults = false;
 
-      rec.onresult = (e: SpeechRecognitionEvent) => {
-        const phrase = Array.from(e.results as any)
-          .map((r: any) => r[0].transcript)
-          .join(" ")
-          .trim();
-        if (phrase) {
-          voiceAccumRef.current = voiceAccumRef.current
-            ? voiceAccumRef.current + " " + phrase
-            : phrase;
-          setVoiceText(voiceAccumRef.current);
+    // Array in closure — indexed by resultIndex to avoid duplicates
+    const phrases: string[] = [];
+
+    rec.onresult = (e: SpeechRecognitionEvent) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          phrases.push(e.results[i][0].transcript.trim());
         }
-      };
-
-      rec.onerror = (e: any) => {
-        if (e.error === "aborted") return; // intentional stop
-        // no-speech / network: let onend restart
-      };
-
-      rec.onend = () => {
-        // Restart automatically while overlay is open
-        if (voiceActiveRef.current) setTimeout(createAndStart, 80);
-      };
-
-      try {
-        rec.start();
-        recognitionRef.current = rec;
-      } catch {
-        if (voiceActiveRef.current) setTimeout(createAndStart, 300);
       }
+      setVoiceText(phrases.join(" "));
     };
 
-    voiceActiveRef.current = true;
-    voiceAccumRef.current = "";
+    rec.onerror = () => { /* ignore — continuous mode handles recovery */ };
+    rec.onend   = () => { /* overlay stays open until user sends or cancels */ };
+
+    rec.start();
+    recognitionRef.current = rec;
     setVoiceText("");
     setListening(true);
-    createAndStart();
   };
 
   const cancelVoice = () => {
-    voiceActiveRef.current = false;
-    recognitionRef.current?.abort();
+    recognitionRef.current?.stop();
     recognitionRef.current = null;
     setListening(false);
     setVoiceText("");
   };
 
   const sendVoice = () => {
-    voiceActiveRef.current = false;
-    recognitionRef.current?.abort();
+    recognitionRef.current?.stop();
     recognitionRef.current = null;
     const text = voiceText.trim();
     setListening(false);
