@@ -119,31 +119,21 @@ export default function ChatView() {
     const launchRec = () => {
       const rec = new SR();
       rec.lang           = "es-ES";
-      rec.continuous     = true;
-      rec.interimResults = true;
+      rec.continuous     = false;
+      rec.interimResults = false;
 
       rec.onresult = (e: SpeechRecognitionEvent) => {
-        let interim = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const t = e.results[i][0].transcript;
-          if (e.results[i].isFinal) {
-            finalsRef.current += (finalsRef.current ? " " : "") + t.trim();
-          } else {
-            interim += t;
-          }
-        }
-        setVoiceText((finalsRef.current + (interim ? " " + interim : "")).trim());
+        const t = e.results[0][0].transcript.trim();
+        if (t) finalsRef.current += (finalsRef.current ? " " : "") + t;
       };
 
       rec.onerror = (e: any) => {
-        if (e.error === "not-allowed") { setListening(false); setVoiceText(""); }
+        if (e.error === "not-allowed") { recognitionRef.current = null; setListening(false); setVoiceText(""); }
       };
 
-      // Mobile browsers often stop continuous recognition — restart silently
+      // When session ends, restart with a fresh instance if user hasn't cancelled
       rec.onend = () => {
-        if (recognitionRef.current === rec) {
-          try { rec.start(); } catch { /* ignore if already stopped by user */ }
-        }
+        if (recognitionRef.current !== null) launchRec();
       };
 
       rec.start();
