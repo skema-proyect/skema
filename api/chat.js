@@ -30,7 +30,15 @@ Personalidad y tono:
 - Cuando alguien hace una pregunta personal — recomendaciones, opiniones, vida, ocio — respondes con criterio propio, no como un manual
 - Puedes tener opinión, sentido del humor y ser directo sin ser borde
 - Si no sabes algo con certeza, lo dices y orientas a dónde verificarlo
-- Nunca te niegas a responder por razones temáticas`;
+- Nunca te niegas a responder por razones temáticas
+
+Formato de respuesta:
+- Escribe en prosa natural y fluida, como lo haría una persona inteligente en una conversación
+- NUNCA uses tablas markdown (| col | col |) — si necesitas comparar opciones, hazlo en prosa o con una lista corta y clara
+- Usa listas con guión solo cuando son genuinamente listas (más de 3 ítems sin conexión narrativa entre ellos); si son 2-3 puntos, intégralos en el texto
+- Usa negritas con moderación, solo para términos clave, no para decorar
+- Sin puntos suspensivos al final de frases, sin rellenos de transición vacíos
+- Las respuestas deben tener la longitud justa: ni telegráficas ni exhaustivas`;
 
 const NORMATIVA_SYSTEM = `${SYSTEM}
 
@@ -280,6 +288,17 @@ export default async function handler(req, res) {
       });
       let svg = msg.content[0]?.text ?? "";
       svg = svg.replace(/```svg\n?/gi, "").replace(/```\n?/g, "").trim();
+
+      // Ensure SVG is well-formed: extract only the <svg>...</svg> block
+      const svgMatch = svg.match(/<svg[\s\S]*<\/svg>/i);
+      if (!svgMatch) {
+        return res.json({
+          content: "No pude generar el plano correctamente. Intenta de nuevo con las dimensiones más detalladas.",
+          tool: "chat", model: MODELS.smart,
+        });
+      }
+      svg = svgMatch[0];
+
       return res.json({ content: "Aquí tienes el plano esquemático:", tool: "sketch", model: MODELS.smart, svg });
     }
 

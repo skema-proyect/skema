@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { conversations as convsDB } from "@/lib/storage";
 import { SERVICES } from "@/constants/services";
 import type { Message } from "@/types";
@@ -27,6 +28,7 @@ export default function ChatView() {
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
+  const finalsRef        = useRef<string>("");
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -110,46 +112,62 @@ export default function ChatView() {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
-    const rec = new SR();
-    rec.lang        = "es-ES";
-    rec.continuous  = true;
-    rec.interimResults = true;
-
-    let finals = "";
-
-    rec.onresult = (e: SpeechRecognitionEvent) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finals += (finals ? " " : "") + t.trim();
-        else interim += t;
-      }
-      // Only update display with finals (interim hidden in overlay mode)
-      if (finals || interim) setVoiceText((finals + (interim ? " " + interim : "")).trim());
-    };
-
-    rec.onerror = (e: any) => {
-      if (e.error === "not-allowed") { setListening(false); setVoiceText(""); }
-    };
-    rec.onend = () => { /* overlay stays open — user sends or cancels */ };
-
-    rec.start();
-    recognitionRef.current = rec;
+    finalsRef.current = "";
     setVoiceText("");
     setListening(true);
+
+    const launchRec = () => {
+      const rec = new SR();
+      rec.lang           = "es-ES";
+      rec.continuous     = true;
+      rec.interimResults = true;
+
+      rec.onresult = (e: SpeechRecognitionEvent) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            finalsRef.current += (finalsRef.current ? " " : "") + t.trim();
+          } else {
+            interim += t;
+          }
+        }
+        setVoiceText((finalsRef.current + (interim ? " " + interim : "")).trim());
+      };
+
+      rec.onerror = (e: any) => {
+        if (e.error === "not-allowed") { setListening(false); setVoiceText(""); }
+      };
+
+      // Mobile browsers often stop continuous recognition — restart silently
+      rec.onend = () => {
+        if (recognitionRef.current === rec) {
+          try { rec.start(); } catch { /* ignore if already stopped by user */ }
+        }
+      };
+
+      rec.start();
+      recognitionRef.current = rec;
+    };
+
+    launchRec();
   };
 
   const cancelVoice = () => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
+    const rec = recognitionRef.current;
+    recognitionRef.current = null; // nullify first so onend doesn't restart
+    rec?.stop();
+    finalsRef.current = "";
     setListening(false);
     setVoiceText("");
   };
 
   const sendVoice = () => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    const text = voiceText.trim();
+    const rec = recognitionRef.current;
+    recognitionRef.current = null; // nullify first so onend doesn't restart
+    rec?.stop();
+    const text = finalsRef.current.trim() || voiceText.trim();
+    finalsRef.current = "";
     setListening(false);
     setVoiceText("");
     if (text) send(text);
@@ -322,7 +340,7 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
       <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
         <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-headings:text-s-text prose-strong:text-s-text prose-li:my-0.5">
-          <ReactMarkdown>{m.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
         </div>
         {m.svg && (
           <div className="border border-s-border rounded-lg overflow-hidden">
