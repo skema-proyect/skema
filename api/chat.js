@@ -91,7 +91,7 @@ RESPUESTA — dos bloques exactos:
 FORMATO doors/windows: "PARED:inicio_m:ancho_m"
 PARED: N=arriba S=abajo E=derecha W=izquierda
 inicio_m: distancia desde la esquina más cercana de esa pared (≥ 0.2m del extremo)
-Las rooms deben cubrir exactamente el rectángulo total (width × height) sin huecos ni solapamientos.`;`;
+Las rooms deben cubrir exactamente el rectángulo total (width × height) sin huecos ni solapamientos.`;
 
 // SVG generator — JavaScript calculates all coordinates (no AI arithmetic)
 function buildFloorPlanSVG(spec) {
