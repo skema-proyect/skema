@@ -111,24 +111,27 @@ export default function ChatView() {
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
     const rec = new SR();
-    rec.lang = "es-ES";
-    rec.continuous = true;
-    rec.interimResults = false;
+    rec.lang        = "es-ES";
+    rec.continuous  = true;
+    rec.interimResults = true;
 
-    // Array in closure — indexed by resultIndex to avoid duplicates
-    const phrases: string[] = [];
+    let finals = "";
 
     rec.onresult = (e: SpeechRecognitionEvent) => {
+      let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          phrases.push(e.results[i][0].transcript.trim());
-        }
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finals += (finals ? " " : "") + t.trim();
+        else interim += t;
       }
-      setVoiceText(phrases.join(" "));
+      // Only update display with finals (interim hidden in overlay mode)
+      if (finals || interim) setVoiceText((finals + (interim ? " " + interim : "")).trim());
     };
 
-    rec.onerror = () => { /* ignore — continuous mode handles recovery */ };
-    rec.onend   = () => { /* overlay stays open until user sends or cancels */ };
+    rec.onerror = (e: any) => {
+      if (e.error === "not-allowed") { setListening(false); setVoiceText(""); }
+    };
+    rec.onend = () => { /* overlay stays open — user sends or cancels */ };
 
     rec.start();
     recognitionRef.current = rec;
