@@ -352,8 +352,10 @@ async function lookupNormativa(message) {
 // ── Intent detection (structured tasks) ───────────────────────────────────────
 function detectIntent(message) {
   if (
-    /\b(plano|planta|croquis|esquema)\b/i.test(message) &&
-    /\d+\s*[x×]\s*\d+|\d+\s*(m|metro|cm)/i.test(message)
+    /\b(plano|planta|croquis|esquema)\b/i.test(message) && (
+      /\d+\s*[x×]\s*\d+|\d+\s*(m[²2]?|metro|cm)/i.test(message) ||
+      /\b(genera|crea|haz|dibuja|actualiza|modifica|cambia|regenera|nuevo|siguiente|ahora)\b/i.test(message)
+    )
   ) return "sketch";
 
   if (/\b(normativa|pgou?|ayuntamiento|urbanismo|edificaci|licencia|retranqueo|altura.*máxim|coeficiente|parcela|uso.*suelo|pgm|catálogo)\b/i.test(message))
@@ -394,7 +396,7 @@ export default async function handler(req, res) {
       const archMsg = await client.messages.create({
         model: MODELS.smart, max_tokens: 1500,
         system: ARCHITECT_SYSTEM,
-        messages: [{ role: "user", content: lastUser.content }],
+        messages: history, // full history so architect sees prior discussion and changes
       });
       const archResponse = archMsg.content[0]?.text ?? "";
 
