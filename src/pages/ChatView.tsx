@@ -79,7 +79,7 @@ export default function ChatView() {
 
     // Build history for API
     const updated = convsDB.get(convId);
-    const history = (updated?.messages ?? []).map(m => ({ role: m.role, content: m.content }));
+    const history = (updated?.messages ?? []).map(m => ({ role: m.role, content: m.content, tool: m.tool }));
 
     try {
       const res  = await fetch("/api/chat", {

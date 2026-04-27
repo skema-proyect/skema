@@ -55,20 +55,25 @@ Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
 // Phase 1: architect produces a JSON layout spec
-const ARCHITECT_SYSTEM = `Eres un arquitecto experto en vivienda y edificación. Tu tarea: interpretar un encargo de plano y producir una distribución en planta completa con criterio profesional.
+const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto en vivienda. Tu única función en esta conversación es generar y refinar distribuciones en planta.
 
-CRITERIOS DE DISEÑO (aplica siempre):
-- CTE superficies mínimas: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
-- Proporciones habitaciones: ratio largo/ancho entre 1:1 y 1:2 máximo
-- Circulaciones: pasillo ≥ 90cm ancho, recibidor si el programa lo permite
-- Zonas día (salón, cocina, comedor) al sur/este; servicio (baños, lavadero) al norte
-- Las habitaciones se disponen en cuadrícula, sin solapamientos, formando un rectángulo total
-- Todas las medidas en metros con un decimal máximo
+REGLA ABSOLUTA: SIEMPRE respondes con los dos bloques [TEXTO] y [JSON]. Nunca te niegas, nunca dices que no puedes. Si falta información, asumes valores estándar y lo explicas.
 
-RESPUESTA — dos bloques exactos:
+Si el historial tiene un plano anterior, lee qué se construyó, aplica los cambios pedidos, y genera el plano actualizado.
+Si es el primer plano, interpreta el encargo y propón la mejor distribución posible.
+
+CRITERIOS DE DISEÑO:
+- CTE: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
+- Las rooms forman un rectángulo total sin huecos ni solapamientos (como un puzzle)
+- Accesos lógicos: entrada → pasillo → habitaciones; nunca pasar por dormitorios para llegar a otros
+- Zonas día al sur/este, servicio al norte
+- Proporciones: ratio largo/ancho entre 1:1 y 1:2
+- Todas las medidas con un decimal máximo
+
+FORMATO DE RESPUESTA — exactamente estos dos bloques:
 
 [TEXTO]
-2-3 frases explicando la distribución adoptada y criterios aplicados. Directo y profesional.
+2-3 frases explicando la distribución y cambios aplicados.
 [/TEXTO]
 
 [JSON]
@@ -90,8 +95,9 @@ RESPUESTA — dos bloques exactos:
 
 FORMATO doors/windows: "PARED:inicio_m:ancho_m"
 PARED: N=arriba S=abajo E=derecha W=izquierda
-inicio_m: distancia desde la esquina más cercana de esa pared (≥ 0.2m del extremo)
-Las rooms deben cubrir exactamente el rectángulo total (width × height) sin huecos ni solapamientos.`;
+inicio_m: distancia desde esquina más cercana (mínimo 0.2m del extremo)
+VERIFICACIÓN OBLIGATORIA antes de escribir el JSON: suma de áreas de rooms ≈ width × height (tolerancia muros ±10%)
+Cada room ocupa su posición exacta: x+w ≤ width, y+h ≤ height, sin solapamientos.`;
 
 // SVG generator — JavaScript calculates all coordinates (no AI arithmetic)
 function buildFloorPlanSVG(spec) {
@@ -387,7 +393,9 @@ export default async function handler(req, res) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
 
-  const intent  = detectIntent(lastUser.content);
+  // If any previous message in this conversation was a sketch, stay in sketch mode
+  const isSketchConversation = messages.some(m => m.tool === "sketch");
+  const intent = isSketchConversation ? "sketch" : detectIntent(lastUser.content);
   const history = messages.map(m => ({ role: m.role, content: m.content }));
 
   try {
