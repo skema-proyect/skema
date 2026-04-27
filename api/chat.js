@@ -55,17 +55,25 @@ Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
 // Sketch conversation — discuss changes in text, no generation
-const SKETCH_CHAT_SYSTEM = `${SYSTEM}
+const SKETCH_CHAT_SYSTEM = `Eres un arquitecto experto trabajando con un cliente en la definición de un plano de planta.
 
-CONTEXTO: Estás ayudando a diseñar o mejorar un plano de planta. Actúas como un arquitecto experto en reunión con el cliente.
+TU ROL:
+- Escucha y confirma con tus palabras lo que pide el usuario
+- Si hay varios cambios, analiza si son compatibles entre sí y señala conflictos si los hay
+- Si algo es ambiguo, pregunta antes de asumir
+- Cuando tengáis todo claro, ofrece generar el plano
 
-TU ROL EN ESTA FASE:
-- Escucha lo que pide el usuario y confirma que lo has entendido con tus palabras
-- Si pide varios cambios, repásalos uno a uno con sus implicaciones (ej: "si agrandamos el salón 1m, el pasillo pierde ese metro — ¿lo eliminamos o lo reducimos?")
-- Si algo es ambiguo o hay conflicto entre cambios, pregunta antes de asumir
-- Cuando tengáis acuerdo claro, cierra con: "¿Lo genero con estos cambios?"
-- Tono directo, profesional, como un arquitecto — no como un asistente genérico
-- NUNCA generes SVG, JSON, código ni planos en esta fase. Solo texto.`;
+REGLA CRÍTICA SOBRE GENERACIÓN:
+- Tú NO generas SVG, código ni planos. Eso lo hace otro sistema cuando recibe la señal.
+- Si el usuario te pide que generes o dice que puedes hacerlo, respóndele: "Perfecto, lo lanzo ahora." y añade [GENERATE] al final.
+- Si el usuario confirma con "sí", "ok", "dale", "venga", "perfecto", "adelante" u otra confirmación positiva después de que hayas ofrecido generarlo, responde brevemente y añade [GENERATE] al final.
+
+CUÁNDO AÑADIR [GENERATE]:
+- Usuario confirma cambios y da luz verde → [GENERATE]
+- Usuario dice explícitamente que quieres el plano → [GENERATE]
+- En cualquier otra situación → NO añadas [GENERATE], solo habla
+
+Tono: directo, profesional, como un arquitecto en reunión. Sin muletillas.`;
 
 // Phase 1: architect produces a JSON layout spec
 const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto en vivienda. Tu única función en esta conversación es generar y refinar distribuciones en planta.
@@ -438,10 +446,17 @@ export default async function handler(req, res) {
           system: SKETCH_CHAT_SYSTEM,
           messages: cleanHistory,
         });
-        return res.json({
-          content: discussMsg.content[0]?.text ?? "",
-          tool: "chat", model: MODELS.smart,
-        });
+        const discussText = discussMsg.content[0]?.text ?? "";
+
+        // If the discussion model decided it's time to generate, fall through to pipeline
+        if (!discussText.includes("[GENERATE]")) {
+          return res.json({
+            content: discussText,
+            tool: "chat", model: MODELS.smart,
+          });
+        }
+        // Strip the marker from the displayed text and continue to generation below
+        // (fall through with cleanHistory and prevSpecJSON already set)
       }
 
       // Build architect system — inject last spec cleanly
