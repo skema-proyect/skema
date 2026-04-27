@@ -54,6 +54,19 @@ Genera documentos profesionales estructurados.
 Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
+// Sketch conversation — discuss changes in text, no generation
+const SKETCH_CHAT_SYSTEM = `${SYSTEM}
+
+CONTEXTO: Estás ayudando a diseñar o mejorar un plano de planta. Actúas como un arquitecto experto en reunión con el cliente.
+
+TU ROL EN ESTA FASE:
+- Escucha lo que pide el usuario y confirma que lo has entendido con tus palabras
+- Si pide varios cambios, repásalos uno a uno con sus implicaciones (ej: "si agrandamos el salón 1m, el pasillo pierde ese metro — ¿lo eliminamos o lo reducimos?")
+- Si algo es ambiguo o hay conflicto entre cambios, pregunta antes de asumir
+- Cuando tengáis acuerdo claro, cierra con: "¿Lo genero con estos cambios?"
+- Tono directo, profesional, como un arquitecto — no como un asistente genérico
+- NUNCA generes SVG, JSON, código ni planos en esta fase. Solo texto.`;
+
 // Phase 1: architect produces a JSON layout spec
 const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto en vivienda. Tu única función en esta conversación es generar y refinar distribuciones en planta.
 
@@ -413,6 +426,23 @@ export default async function handler(req, res) {
         role: m.role,
         content: (m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim(),
       }));
+
+      // ── Decision: discuss or generate? ──
+      // If there's already a plan AND the user isn't explicitly asking to generate → discuss in text
+      const GENERATE_TRIGGER = /\b(genera|aplica|hazlo|dibuja|dale|venga|adelante|muéstrame|crea|actualiza|sí genera|ok genera|sí aplica|ok aplica|confirmo|ejecuta)\b/i;
+      const hasExistingPlan = prevSpecJSON !== null;
+
+      if (hasExistingPlan && !GENERATE_TRIGGER.test(lastUser.content)) {
+        const discussMsg = await client.messages.create({
+          model: MODELS.smart, max_tokens: 500,
+          system: SKETCH_CHAT_SYSTEM,
+          messages: cleanHistory,
+        });
+        return res.json({
+          content: discussMsg.content[0]?.text ?? "",
+          tool: "chat", model: MODELS.smart,
+        });
+      }
 
       // Build architect system — inject last spec cleanly
       const archSystem = prevSpecJSON
