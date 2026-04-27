@@ -401,10 +401,25 @@ export default async function handler(req, res) {
   try {
     // ── Sketch (architect → JSON → JS renders SVG) ──
     if (intent === "sketch") {
+      // Recover previous spec from history (stored as hidden comment in assistant content)
+      const prevSpecMsg = [...history].reverse()
+        .find(m => m.role === "assistant" && m.content?.includes("<!--SPEC:"));
+      const prevSpecJSON = prevSpecMsg?.content?.match(/<!--SPEC:([\s\S]*?)-->/)?.[1]?.trim();
+
+      // If there's a previous spec, tell the architect to only apply changes
+      const archSystem = prevSpecJSON
+        ? `${ARCHITECT_SYSTEM}
+
+PLANO ACTUAL EN PANTALLA — JSON exacto:
+${prevSpecJSON}
+
+INSTRUCCIÓN CRÍTICA: Aplica SOLO los cambios que pide el usuario en su último mensaje. Todo lo demás (posiciones, tamaños, nombres, puertas, ventanas) debe quedar EXACTAMENTE igual que en el JSON de arriba. No te inventes nada nuevo.`
+        : ARCHITECT_SYSTEM;
+
       const archMsg = await client.messages.create({
         model: MODELS.smart, max_tokens: 1500,
-        system: ARCHITECT_SYSTEM,
-        messages: history, // full history so architect sees prior discussion and changes
+        system: archSystem,
+        messages: history,
       });
       const archResponse = archMsg.content[0]?.text ?? "";
 
@@ -432,8 +447,10 @@ export default async function handler(req, res) {
       }
 
       const svg = buildFloorPlanSVG(spec);
+      // Embed spec as hidden HTML comment so future calls can recover it
+      const specComment = `<!--SPEC:${JSON.stringify(spec)}-->`;
       return res.json({
-        content: userText || "Aquí tienes el plano:",
+        content: `${userText || "Aquí tienes el plano:"}\n\n${specComment}`,
         tool: "sketch", model: MODELS.smart,
         svg,
       });
