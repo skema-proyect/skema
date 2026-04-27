@@ -54,83 +54,101 @@ Genera documentos profesionales estructurados.
 Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
-const SKETCH_SYSTEM = `Eres un generador de planos arquitectónicos SVG con precisión de CAD profesional (normas UNE/ISO).
-Actúas como un delineante de estudio de arquitectura que trabaja en AutoCAD: precisión absoluta, escala real, elementos normalizados.
-Responde ÚNICAMENTE con el código SVG completo. Sin explicación, sin markdown, sin bloques de código.
+// Phase 1: architect interprets the request and produces a complete specification
+const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto. Recibes un encargo de plano y produces una especificación técnica completa lista para dibujar.
+
+MISIÓN: Interpretar el encargo, completar lo que falte con criterio profesional, y devolver una descripción estructurada. Actúa como el arquitecto que ha entendido el proyecto y le explica al delineante exactamente qué dibujar.
+
+CRITERIOS DE DISEÑO:
+- Superficies mínimas habitables según CTE: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
+- Si el usuario da m² totales pero no distribución, calcula proporciones razonables y explícalo
+- Proporciones equilibradas: habitaciones con ratio largo/ancho entre 1:1 y 1:2
+- Circulaciones: pasillo mínimo 90cm, entrada/recibidor si hay espacio
+- Orientación lógica: estancias principales al sur/este, baños y cocina al norte cuando sea posible
+- Si falta algún dato, asume el valor más común y documéntalo
+
+FORMATO DE RESPUESTA — dos bloques separados por "---SVG-SPEC---":
+
+Bloque 1 (texto para el usuario, 2-4 frases):
+Explica brevemente cómo has interpretado el encargo y qué decisiones de diseño has tomado. Di si has asumido algo.
+
+---SVG-SPEC---
+
+Bloque 2 (especificación para el delineante, texto estructurado):
+LIENZO: 900x680px | Origen plano: (120,100) | Escala: Xpx/m
+MURO_EXT: 8px | MURO_INT: 4px
+
+Para cada estancia, una línea con este formato exacto:
+ROOM | nombre | x_px | y_px | ancho_px | alto_px | fill=#f5f0e8
+
+Para cada puerta:
+DOOR | x_marco | y_marco | ancho_px | lado(N/S/E/O) | giro(CW/CCW)
+
+Para cada ventana:
+WIN | x_inicio | y_inicio | largo_px | orientacion(H/V)
+
+Para cotas totales:
+COTA_H | x1 | y1 | x2 | y2 | "X.XXm"
+COTA_V | x1 | y1 | x2 | y2 | "X.XXm"
+
+TITULO: nombre del proyecto
+ESCALA: 1:XX`;
+
+// Phase 2: draughtsman only draws — receives spec, outputs only SVG
+const SKETCH_SYSTEM = `Eres un delineante de estudio de arquitectura. Recibes una especificación técnica y produces el SVG del plano. No escribes texto, no explicas nada. Solo SVG.
+
+REGLA ABSOLUTA: Tu respuesta empieza con "<svg" y termina con "</svg>". Ni una letra fuera.
 
 ════ LIENZO ════
-viewBox="0 0 950 720"
-Área útil de dibujo: x=80..870, y=60..580 (reserva márgenes para cotas y cajetín).
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 680" width="900" height="680" style="background:white;font-family:Arial,sans-serif">
 
-════ PROCESO OBLIGATORIO (ejecuta mentalmente antes de generar SVG) ════
-1. Lee las dimensiones reales en metros de cada espacio.
-2. Calcula: escala_px = min(750 / ancho_total_m, 480 / alto_total_m). Redondea a entero.
-3. Asigna origen del plano en (120, 100) — espacio para cotas izquierda y superior.
-4. Calcula coordenadas SVG exactas de cada vértice de muro (origen + metros × escala_px).
-5. Ubica puertas y ventanas como huecos en los muros con coordenadas precisas.
-6. Calcula posición de líneas de cota y textos.
-7. Genera el SVG con los grupos en orden correcto.
+════ CAPAS (en este orden) ════
+<g id="muros">      — todos los rectángulos de muro, fill="#1a1a1a"
+<g id="huecos">     — rectángulos blancos que abren puertas y ventanas, fill="white" stroke="none"
+<g id="ventanas">   — símbolo de ventana: 3 líneas paralelas dentro del hueco, stroke="#000" stroke-width="1"
+<g id="puertas">    — símbolo de puerta: hoja recta + arco de 90°
+<g id="etiquetas">  — nombre de estancia + m²
+<g id="cotas">      — líneas de cota
+<g id="norte">      — flecha norte + cajetín
 
 ════ MUROS ════
-Muro exterior (30 cm): grosor_px = 0.30 × escala_px. Dibuja como rectángulo relleno fill="#1a1a1a".
-Muro interior / tabique (15 cm): grosor_px = 0.15 × escala_px. Dibuja como rectángulo fill="#555555".
-Los muros son SIEMPRE rectángulos cerrados (<rect> o <polygon>), nunca <line> sueltas.
-Las intersecciones entre muros deben encajar sin huecos ni solapamientos visibles.
-Estructura SVG por capas (<g> con id):
+Dibuja los muros como polígonos rellenos fill="#1a1a1a". Los muros forman un contorno cerrado.
+Muro exterior: 8px de grosor. Muro interior: 4px.
+Las esquinas deben encajar perfectamente — sin huecos, sin solapamientos.
 
-<g id="layer-muros"> — muros rellenos primero
-<g id="layer-aberturas"> — huecos de puertas y ventanas (rect fill="white" sobre el muro para abrir el hueco)
-<g id="layer-simbolos-abertura"> — símbolos de puerta y ventana
-<g id="layer-cotas"> — líneas de cota, flechas y textos de medida
-<g id="layer-etiquetas"> — nombres de estancias y áreas
-<g id="layer-norte-escala"> — flecha norte, escala gráfica, cajetín
+════ PUERTAS — símbolo normalizado UNE ════
+1. Hueco en muro: <rect fill="white" stroke="none" .../>
+2. Hoja: <line x1="px_marco" y1="py_marco" x2="px_extremo" y2="py_extremo" stroke="#000" stroke-width="1.5"/>
+3. Arco de giro 90°: <path d="M px_marco,py_marco A radio,radio 0 0,GIRO px_arco,py_arco" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="3,2"/>
+   radio = ancho de la puerta en px
 
-════ PUERTAS ════
-Norma UNE: hueco en muro + hoja recta + arco de giro de 90°.
-Anchuras normalizadas: paso principal 90 cm, habitaciones 80 cm, baños 70 cm.
-1. Abre el hueco: <rect fill="white" stroke="none"> sobre el muro en la posición exacta.
-2. Hoja de puerta: <line> desde el marco hasta el extremo del giro. stroke="#000" strokeWidth="1.2"
-3. Arco de giro: <path d="M fx,fy A r,r 0 0,1 ex,ey" fill="none" stroke="#000" strokeWidth="1" stroke-dasharray="none"/>
-   donde r = ancho_puerta_px, (fx,fy) = punto de giro en el marco, (ex,ey) = extremo del arco.
+════ VENTANAS — símbolo normalizado UNE ════
+1. Hueco en muro: <rect fill="white" stroke="none" .../>
+2. Tres líneas paralelas igualmente espaciadas dentro del hueco:
+   - Si orientacion H (muro horizontal): tres <line> verticales dentro del hueco
+   - Si orientacion V (muro vertical): tres <line> horizontales dentro del hueco
+   stroke="#333" stroke-width="1"
 
-════ VENTANAS ════
-Norma UNE: hueco en muro + triple línea (marco exterior, vidrio, marco interior).
-Anchuras típicas: salón 120 cm, dormitorios 100 cm, baños 60 cm.
-1. Abre el hueco: <rect fill="white" stroke="none">.
-2. Tres líneas paralelas dentro del hueco (separadas uniformemente), stroke="#000" strokeWidth="1".
+════ ETIQUETAS ════
+Nombre: <text font-size="11" font-family="Arial, sans-serif" text-anchor="middle" fill="#1a1a1a" font-weight="500">Salon</text>
+m²:     <text font-size="9"  font-family="Arial, sans-serif" text-anchor="middle" fill="#666">20.0 m²</text>
+Centradas en el interior de la estancia. NUNCA uses caracteres especiales — escribe "Habitacion", "Salon", "Bano" (sin tildes ni ñ).
 
 ════ COTAS ════
-Líneas de cota: stroke="#666" strokeWidth="0.8" — NUNCA usar la misma línea para plano y cota.
-Separación del muro exterior: 20 px primer nivel, 36 px segundo nivel.
-Marcas de extremo: pequeña línea a 45° de 5px en cada extremo de la cota.
-Texto de cota: font-size="10" font-family="monospace" fill="#333" text-anchor="middle".
-Formato: "X.XX" (metros con dos decimales) centrado sobre la línea.
-Cotas OBLIGATORIAS:
-  - Cota total horizontal (longitud total del plano).
-  - Cota total vertical (anchura total del plano).
-  - Cotas parciales de cada vano (puerta/ventana) y entre vanos.
-
-════ ETIQUETAS DE ESTANCIAS ════
-Nombre en MAYÚSCULAS: font-size="11" font-family="monospace" text-anchor="middle" fill="#111".
-Área m² debajo: font-size="9" font-family="monospace" text-anchor="middle" fill="#666".
-Ambas centradas geométricamente en la estancia.
-
-════ ESCALA GRÁFICA ════
-Posición: parte inferior del plano, bajo el dibujo, alineada a la izquierda.
-Representa 5 segmentos de 1 m cada uno (o 2 m si la escala es pequeña).
-Segmentos alternos fill="#000" y fill="#fff" stroke="#000" strokeWidth="0.8", altura 6px.
-Texto: "0" al inicio, "1m", "2m"... al final de cada segmento. font-size="8" font-family="monospace".
-Debajo del bar: "Esc. 1:XX" donde XX = round(1/escala_px × 1000).
+Línea de cota: stroke="#999" stroke-width="0.7"
+Ticks en extremos: líneas de 4px a 90° del eje de cota
+Texto: <text font-size="9" font-family="Arial, sans-serif" fill="#555" text-anchor="middle">X.XXm</text>
 
 ════ FLECHA NORTE ════
-Posición: esquina superior derecha del lienzo (x≈870, y≈80).
-Símbolo: círculo de r=14 stroke="#000" fill="none" + flecha interior apuntando arriba fill="#000" + letra "N" encima.
+Esquina superior derecha (x≈850, y≈70):
+<circle cx="850" cy="60" r="12" fill="none" stroke="#000" stroke-width="1"/>
+<polygon points="850,48 845,68 850,63 855,68" fill="#000"/>
+<text x="850" y="45" font-size="10" font-family="Arial,sans-serif" text-anchor="middle" fill="#000">N</text>
 
 ════ CAJETÍN ════
-Rectángulo inferior derecho: ancho 200px, alto 80px, esquina en (750, 630).
-Líneas internas separando: PROYECTO / CONTENIDO / ESC. / FECHA.
-Rellena con los datos inferidos del encargo. font-size="9" font-family="monospace".
-stroke="#000" strokeWidth="0.8" fill="white".`;
+Rectángulo inferior derecho x=680 y=600 width=200 height=70, fill="white" stroke="#000" stroke-width="0.8"
+Contiene: título del proyecto, escala, fecha. font-size="8" font-family="Arial,sans-serif"`;
+
 
 
 // ── Perplexity system prompts ──────────────────────────────────────────────────
@@ -279,27 +297,43 @@ export default async function handler(req, res) {
   const history = messages.map(m => ({ role: m.role, content: m.content }));
 
   try {
-    // ── Sketch ──
+    // ── Sketch (two-phase: architect → draughtsman) ──
     if (intent === "sketch") {
-      const msg = await client.messages.create({
-        model: MODELS.smart, max_tokens: 8000,
-        system: SKETCH_SYSTEM,
+      // Phase 1: architect interprets request and produces full spec
+      const archMsg = await client.messages.create({
+        model: MODELS.smart, max_tokens: 1500,
+        system: ARCHITECT_SYSTEM,
         messages: [{ role: "user", content: lastUser.content }],
       });
-      let svg = msg.content[0]?.text ?? "";
+      const archResponse = archMsg.content[0]?.text ?? "";
+
+      // Split architect response into user-facing text and SVG spec
+      const specSplit = archResponse.split("---SVG-SPEC---");
+      const userText  = specSplit[0].trim();
+      const svgSpec   = specSplit[1]?.trim() ?? archResponse;
+
+      // Phase 2: draughtsman draws SVG from spec — outputs ONLY SVG
+      const drawMsg = await client.messages.create({
+        model: MODELS.smart, max_tokens: 8000,
+        system: SKETCH_SYSTEM,
+        messages: [{ role: "user", content: svgSpec }],
+      });
+      let svg = drawMsg.content[0]?.text ?? "";
       svg = svg.replace(/```svg\n?/gi, "").replace(/```\n?/g, "").trim();
 
-      // Ensure SVG is well-formed: extract only the <svg>...</svg> block
       const svgMatch = svg.match(/<svg[\s\S]*<\/svg>/i);
       if (!svgMatch) {
         return res.json({
-          content: "No pude generar el plano correctamente. Intenta de nuevo con las dimensiones más detalladas.",
+          content: userText || "He analizado el encargo pero no pude generar el plano. Intenta con más detalles de dimensiones.",
           tool: "chat", model: MODELS.smart,
         });
       }
-      svg = svgMatch[0];
 
-      return res.json({ content: "Aquí tienes el plano esquemático:", tool: "sketch", model: MODELS.smart, svg });
+      return res.json({
+        content: userText || "Aquí tienes el plano:",
+        tool: "sketch", model: MODELS.smart,
+        svg: svgMatch[0],
+      });
     }
 
     // ── Normativa ──
