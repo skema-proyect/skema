@@ -29,6 +29,7 @@ export default function ChatView() {
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
   const finalsRef        = useRef<string>("");
+  const pendingSendRef   = useRef<boolean>(false);
 
   // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
   useEffect(() => {
@@ -131,9 +132,18 @@ export default function ChatView() {
         if (e.error === "not-allowed") { recognitionRef.current = null; setListening(false); setVoiceText(""); }
       };
 
-      // When session ends, restart with a fresh instance after a short pause
-      // (mobile Chrome fires onend almost instantly — delay prevents rapid loop)
       rec.onend = () => {
+        // User pressed send — wait for this onend so onresult has fired first
+        if (pendingSendRef.current) {
+          pendingSendRef.current = false;
+          const text = finalsRef.current.trim();
+          finalsRef.current = "";
+          setListening(false);
+          setVoiceText("");
+          if (text) send(text);
+          return;
+        }
+        // Still listening — restart with a fresh instance after a short pause
         if (recognitionRef.current !== null) {
           setTimeout(() => {
             if (recognitionRef.current !== null) launchRec();
@@ -158,14 +168,23 @@ export default function ChatView() {
   };
 
   const sendVoice = () => {
+    // If there's already captured text, send immediately
+    const existing = finalsRef.current.trim();
+    if (existing) {
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;
+      rec?.stop();
+      finalsRef.current = "";
+      setListening(false);
+      setVoiceText("");
+      send(existing);
+      return;
+    }
+    // Otherwise mark pending — onresult+onend will complete and send
+    pendingSendRef.current = true;
     const rec = recognitionRef.current;
-    recognitionRef.current = null; // nullify first so onend doesn't restart
+    recognitionRef.current = null;
     rec?.stop();
-    const text = finalsRef.current.trim() || voiceText.trim();
-    finalsRef.current = "";
-    setListening(false);
-    setVoiceText("");
-    if (text) send(text);
   };
 
   // Download SVG
