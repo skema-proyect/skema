@@ -23,6 +23,7 @@ export default function ChatView() {
   const [loading,        setLoading]        = useState(false);
   const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [listening,      setListening]      = useState(false);
+  const [voiceText,      setVoiceText]      = useState("");
   const bottomRef        = useRef<HTMLDivElement>(null);
   const textareaRef      = useRef<HTMLTextAreaElement>(null);
   const recognitionRef   = useRef<any>(null);
@@ -65,12 +66,6 @@ export default function ChatView() {
   }, [currentConvId, setCurrentConvId]);
 
   const send = useCallback(async (text?: string) => {
-    // Stop mic if active and use whatever has been captured so far
-    if (listening) {
-      recognitionRef.current?.stop();
-      recognitionRef.current = null;
-      setListening(false);
-    }
     const content = (text ?? input).trim();
     if (!content || loading) return;
     setInput("");
@@ -108,39 +103,53 @@ export default function ChatView() {
       setLoading(false);
       bump();
     }
-  }, [input, loading, listening, getOrCreateConv, bump]);
+  }, [input, loading, getOrCreateConv, bump]);
 
-  // Voice — Web Speech API (real-time, no backend)
+  // Voice — Gemini-style overlay with Web Speech API
   const startVoice = () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
 
     const rec = new SR();
     rec.lang = "es-ES";
-    rec.continuous = true;
-    rec.interimResults = true;
+    rec.continuous = false;   // no repetition bug
+    rec.interimResults = false;
 
-    // Text confirmed before mic was activated + accumulated finals during session
-    const prefix = input.trim();
-    let finals = "";
+    let captured = "";
 
     rec.onresult = (e: SpeechRecognitionEvent) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finals += (finals ? " " : "") + t.trim();
-        else interim += t;
-      }
-      const combined = [prefix, finals, interim].filter(Boolean).join(" ");
-      setInput(combined);
+      captured = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join(" ")
+        .trim();
+      setVoiceText(captured);
     };
 
     rec.onerror = () => { setListening(false); };
-    rec.onend   = () => { setListening(false); };
+    rec.onend   = () => {
+      // keep overlay open so user can hit send or cancel
+    };
 
     rec.start();
     recognitionRef.current = rec;
+    setVoiceText("");
     setListening(true);
+  };
+
+  const cancelVoice = () => {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setListening(false);
+    setVoiceText("");
+  };
+
+  const sendVoice = () => {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    const text = voiceText.trim();
+    setListening(false);
+    setVoiceText("");
+    if (text) send(text);
   };
 
   // Download SVG
@@ -158,7 +167,7 @@ export default function ChatView() {
   const greeting = userName ? `${timeGreeting}, ${userName}` : timeGreeting;
 
   return (
-    <div className="flex flex-col h-full bg-s-bg">
+    <div className="relative flex flex-col h-full bg-s-bg">
 
       {/* Empty state */}
       {messages.length === 0 && (
@@ -207,6 +216,43 @@ export default function ChatView() {
         </div>
       )}
 
+      {/* Voice overlay — Gemini style */}
+      {listening && (
+        <div className="absolute inset-x-0 bottom-0 z-50 flex flex-col items-center justify-end pb-6 pt-8"
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 60%, transparent)" }}>
+          {/* Wave bars */}
+          <div className="flex items-center gap-1.5 h-14 mb-6">
+            {[0,1,2,3,4,5,6].map(i => (
+              <div
+                key={i}
+                className="w-1 rounded-full bg-white"
+                style={{
+                  animation: `voiceWave 0.9s ease-in-out infinite alternate`,
+                  animationDelay: `${i * 0.12}s`,
+                  height: "12px",
+                }}
+              />
+            ))}
+          </div>
+          <p className="text-white/60 text-[13px] mb-6">Escuchando...</p>
+          {/* Buttons */}
+          <div className="flex items-center gap-6">
+            <button
+              onClick={cancelVoice}
+              className="w-12 h-12 rounded-full bg-white/15 text-white flex items-center justify-center text-xl hover:bg-white/25 transition-colors"
+              title="Cancelar"
+            >✕</button>
+            <button
+              onClick={sendVoice}
+              className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 hover:opacity-90 transition-opacity shadow-lg"
+              title="Enviar"
+            >
+              <Send size={22} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input bar */}
       <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
@@ -228,16 +274,16 @@ export default function ChatView() {
             </div>
 
             {/* Circle action button */}
-            {(listening || input.trim()) ? (
+            {input.trim() ? (
               <button
                 onClick={() => send()}
                 disabled={loading}
-                className={`w-12 h-12 rounded-full text-white flex items-center justify-center flex-shrink-0 transition-all ${listening ? "bg-red-500 animate-pulse" : "bg-black hover:opacity-75 disabled:opacity-30"}`}
+                className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 disabled:opacity-30 transition-opacity"
                 title="Enviar"
               >
                 <Send size={19} />
               </button>
-            ) : (
+            ) : !listening ? (
               <button
                 onClick={startVoice}
                 className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 transition-opacity"
@@ -245,7 +291,7 @@ export default function ChatView() {
               >
                 <Mic size={19} />
               </button>
-            )}
+            ) : null}
           </div>
           <p className="text-center text-[11px] text-s-muted mt-2">
             SKEMA puede cometer errores. Verifica la información importante.
@@ -286,7 +332,13 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
                 <Download size={12} /> Descargar SVG
               </button>
             </div>
-            <div className="bg-white p-2" dangerouslySetInnerHTML={{ __html: m.svg }} />
+            <div className="bg-white p-2 overflow-x-auto">
+              {m.svg?.startsWith("<svg") ? (
+                <div dangerouslySetInnerHTML={{ __html: m.svg }} style={{ maxWidth: "100%", height: "auto" }} />
+              ) : (
+                <p className="text-[12px] text-s-muted p-2">No se pudo renderizar el plano.</p>
+              )}
+            </div>
           </div>
         )}
         {m.model && (
