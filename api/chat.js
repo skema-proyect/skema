@@ -54,100 +54,192 @@ Genera documentos profesionales estructurados.
 Elimina las muletillas del lenguaje hablado.
 Usa formato claro con secciones, bullet points donde sea eficiente.`;
 
-// Phase 1: architect interprets the request and produces a complete specification
-const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto. Recibes un encargo de plano y produces una especificación técnica completa lista para dibujar.
+// Phase 1: architect produces a JSON layout spec
+const ARCHITECT_SYSTEM = `Eres un arquitecto experto en vivienda y edificación. Tu tarea: interpretar un encargo de plano y producir una distribución en planta completa con criterio profesional.
 
-MISIÓN: Interpretar el encargo, completar lo que falte con criterio profesional, y devolver una descripción estructurada. Actúa como el arquitecto que ha entendido el proyecto y le explica al delineante exactamente qué dibujar.
+CRITERIOS DE DISEÑO (aplica siempre):
+- CTE superficies mínimas: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
+- Proporciones habitaciones: ratio largo/ancho entre 1:1 y 1:2 máximo
+- Circulaciones: pasillo ≥ 90cm ancho, recibidor si el programa lo permite
+- Zonas día (salón, cocina, comedor) al sur/este; servicio (baños, lavadero) al norte
+- Las habitaciones se disponen en cuadrícula, sin solapamientos, formando un rectángulo total
+- Todas las medidas en metros con un decimal máximo
 
-CRITERIOS DE DISEÑO:
-- Superficies mínimas habitables según CTE: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
-- Si el usuario da m² totales pero no distribución, calcula proporciones razonables y explícalo
-- Proporciones equilibradas: habitaciones con ratio largo/ancho entre 1:1 y 1:2
-- Circulaciones: pasillo mínimo 90cm, entrada/recibidor si hay espacio
-- Orientación lógica: estancias principales al sur/este, baños y cocina al norte cuando sea posible
-- Si falta algún dato, asume el valor más común y documéntalo
+RESPUESTA — dos bloques exactos:
 
-FORMATO DE RESPUESTA — dos bloques separados por "---SVG-SPEC---":
+[TEXTO]
+2-3 frases explicando la distribución adoptada y criterios aplicados. Directo y profesional.
+[/TEXTO]
 
-Bloque 1 (texto para el usuario, 2-4 frases):
-Explica brevemente cómo has interpretado el encargo y qué decisiones de diseño has tomado. Di si has asumido algo.
+[JSON]
+{
+  "title": "Nombre del proyecto",
+  "width": 10.0,
+  "height": 8.0,
+  "rooms": [
+    {
+      "name": "Salon-Comedor",
+      "x": 0.0, "y": 0.0, "w": 7.0, "h": 3.5,
+      "area": 24.5,
+      "doors": ["W:0.5:0.9"],
+      "windows": ["S:2.0:1.2"]
+    }
+  ]
+}
+[/JSON]
 
----SVG-SPEC---
+FORMATO doors/windows: "PARED:inicio_m:ancho_m"
+PARED: N=arriba S=abajo E=derecha W=izquierda
+inicio_m: distancia desde la esquina más cercana de esa pared (≥ 0.2m del extremo)
+Las rooms deben cubrir exactamente el rectángulo total (width × height) sin huecos ni solapamientos.`;`;
 
-Bloque 2 (especificación para el delineante, texto estructurado):
-LIENZO: 900x680px | Origen plano: (120,100) | Escala: Xpx/m
-MURO_EXT: 8px | MURO_INT: 4px
+// SVG generator — JavaScript calculates all coordinates (no AI arithmetic)
+function buildFloorPlanSVG(spec) {
+  const CW = 900, CH = 640;
+  const ML = 110, MT = 80, MR = 90, MB = 110;
+  const DW = CW - ML - MR, DH = CH - MT - MB;
 
-Para cada estancia, una línea con este formato exacto:
-ROOM | nombre | x_px | y_px | ancho_px | alto_px | fill=#f5f0e8
+  const scale = Math.min(DW / spec.width, DH / spec.height);
+  const X = m => ML + m * scale;
+  const Y = m => MT + m * scale;
+  const S = m => m * scale;
 
-Para cada puerta:
-DOOR | x_marco | y_marco | ancho_px | lado(N/S/E/O) | giro(CW/CCW)
+  const EXT = 9, INT = 3;
 
-Para cada ventana:
-WIN | x_inicio | y_inicio | largo_px | orientacion(H/V)
+  const COLORS = [
+    '#e8edf5','#e8f0ea','#f5ece8','#ece8f5',
+    '#e8f5f0','#f5f0e8','#f0e8f5','#f5f5e8','#e8f5ec',
+  ];
 
-Para cotas totales:
-COTA_H | x1 | y1 | x2 | y2 | "X.XXm"
-COTA_V | x1 | y1 | x2 | y2 | "X.XXm"
+  function sa(str) {
+    return String(str)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/\u00f1/g,'n').replace(/\u00d1/g,'N');
+  }
 
-TITULO: nombre del proyecto
-ESCALA: 1:XX`;
+  const p = [];
+  const push = s => p.push(s);
 
-// Phase 2: draughtsman only draws — receives spec, outputs only SVG
-const SKETCH_SYSTEM = `Eres un delineante de estudio de arquitectura. Recibes una especificación técnica y produces el SVG del plano. No escribes texto, no explicas nada. Solo SVG.
+  push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" style="background:white">`);
+  push(`<defs><style>text{font-family:Arial,Helvetica,sans-serif}</style></defs>`);
 
-REGLA ABSOLUTA: Tu respuesta empieza con "<svg" y termina con "</svg>". Ni una letra fuera.
+  // Exterior wall
+  push(`<rect x="${X(0)-EXT}" y="${Y(0)-EXT}" width="${S(spec.width)+EXT*2}" height="${S(spec.height)+EXT*2}" fill="#1a1a1a"/>`);
+  push(`<rect x="${X(0)}" y="${Y(0)}" width="${S(spec.width)}" height="${S(spec.height)}" fill="white"/>`);
 
-════ LIENZO ════
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 680" width="900" height="680" style="background:white;font-family:Arial,sans-serif">
+  // Rooms
+  spec.rooms.forEach((r, i) => {
+    const rx = X(r.x), ry = Y(r.y), rw = S(r.w), rh = S(r.h);
+    const color = COLORS[i % COLORS.length];
+    push(`<rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${rw.toFixed(1)}" height="${rh.toFixed(1)}" fill="${color}" stroke="#444" stroke-width="${INT}"/>`);
 
-════ CAPAS (en este orden) ════
-<g id="muros">      — todos los rectángulos de muro, fill="#1a1a1a"
-<g id="huecos">     — rectángulos blancos que abren puertas y ventanas, fill="white" stroke="none"
-<g id="ventanas">   — símbolo de ventana: 3 líneas paralelas dentro del hueco, stroke="#000" stroke-width="1"
-<g id="puertas">    — símbolo de puerta: hoja recta + arco de 90°
-<g id="etiquetas">  — nombre de estancia + m²
-<g id="cotas">      — líneas de cota
-<g id="norte">      — flecha norte + cajetín
+    const cx = (rx + rw / 2).toFixed(1);
+    const cy = (ry + rh / 2).toFixed(1);
+    const area = r.area != null ? Number(r.area).toFixed(1) : (r.w * r.h).toFixed(1);
+    push(`<text x="${cx}" y="${+cy - 6}" font-size="11" text-anchor="middle" fill="#111" font-weight="600">${sa(r.name)}</text>`);
+    push(`<text x="${cx}" y="${+cy + 9}" font-size="9" text-anchor="middle" fill="#555">${area} m\u00B2</text>`);
+  });
 
-════ MUROS ════
-Dibuja los muros como polígonos rellenos fill="#1a1a1a". Los muros forman un contorno cerrado.
-Muro exterior: 8px de grosor. Muro interior: 4px.
-Las esquinas deben encajar perfectamente — sin huecos, sin solapamientos.
+  // Doors
+  spec.rooms.forEach(r => {
+    (r.doors || []).forEach(d => {
+      const [wall, posS, wS] = d.split(':');
+      const pos = parseFloat(posS), dw = parseFloat(wS);
+      const dpx = S(dw);
+      const W_WALL = wall.toUpperCase();
 
-════ PUERTAS — símbolo normalizado UNE ════
-1. Hueco en muro: <rect fill="white" stroke="none" .../>
-2. Hoja: <line x1="px_marco" y1="py_marco" x2="px_extremo" y2="py_extremo" stroke="#000" stroke-width="1.5"/>
-3. Arco de giro 90°: <path d="M px_marco,py_marco A radio,radio 0 0,GIRO px_arco,py_arco" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="3,2"/>
-   radio = ancho de la puerta en px
+      if (W_WALL === 'N' || W_WALL === 'S') {
+        const wy = W_WALL === 'N' ? Y(r.y) : Y(r.y + r.h);
+        const dx = X(r.x + pos);
+        push(`<rect x="${dx}" y="${wy - EXT - 2}" width="${dpx}" height="${EXT * 2 + 4}" fill="white" stroke="none"/>`);
+        const leafY = W_WALL === 'N' ? wy + dpx : wy - dpx;
+        push(`<line x1="${dx}" y1="${wy}" x2="${dx}" y2="${leafY}" stroke="#1a1a1a" stroke-width="1.5"/>`);
+        const sf = W_WALL === 'N' ? 1 : 0;
+        push(`<path d="M ${(dx + dpx).toFixed(1)},${wy} A ${dpx},${dpx} 0 0,${sf} ${dx},${leafY}" fill="none" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="4,3"/>`);
+      } else {
+        const wx = W_WALL === 'W' ? X(r.x) : X(r.x + r.w);
+        const dy = Y(r.y + pos);
+        push(`<rect x="${wx - EXT - 2}" y="${dy}" width="${EXT * 2 + 4}" height="${dpx}" fill="white" stroke="none"/>`);
+        const leafX = W_WALL === 'W' ? wx + dpx : wx - dpx;
+        push(`<line x1="${wx}" y1="${dy}" x2="${leafX}" y2="${dy}" stroke="#1a1a1a" stroke-width="1.5"/>`);
+        const sf = W_WALL === 'W' ? 0 : 1;
+        push(`<path d="M ${wx},${(dy + dpx).toFixed(1)} A ${dpx},${dpx} 0 0,${sf} ${leafX},${dy}" fill="none" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="4,3"/>`);
+      }
+    });
+  });
 
-════ VENTANAS — símbolo normalizado UNE ════
-1. Hueco en muro: <rect fill="white" stroke="none" .../>
-2. Tres líneas paralelas igualmente espaciadas dentro del hueco:
-   - Si orientacion H (muro horizontal): tres <line> verticales dentro del hueco
-   - Si orientacion V (muro vertical): tres <line> horizontales dentro del hueco
-   stroke="#333" stroke-width="1"
+  // Windows
+  spec.rooms.forEach(r => {
+    (r.windows || []).forEach(w => {
+      const [wall, posS, wS] = w.split(':');
+      const pos = parseFloat(posS), ww = parseFloat(wS);
+      const wpx = S(ww);
+      const W_WALL = wall.toUpperCase();
 
-════ ETIQUETAS ════
-Nombre: <text font-size="11" font-family="Arial, sans-serif" text-anchor="middle" fill="#1a1a1a" font-weight="500">Salon</text>
-m²:     <text font-size="9"  font-family="Arial, sans-serif" text-anchor="middle" fill="#666">20.0 m²</text>
-Centradas en el interior de la estancia. NUNCA uses caracteres especiales — escribe "Habitacion", "Salon", "Bano" (sin tildes ni ñ).
+      if (W_WALL === 'N' || W_WALL === 'S') {
+        const wy = W_WALL === 'N' ? Y(r.y) : Y(r.y + r.h);
+        const wx = X(r.x + pos);
+        push(`<rect x="${wx}" y="${wy - EXT - 1}" width="${wpx}" height="${EXT * 2 + 2}" fill="white" stroke="none"/>`);
+        push(`<rect x="${wx}" y="${wy - EXT}" width="${wpx}" height="${EXT * 2}" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>`);
+        const t = wpx / 3;
+        for (let k = 0; k < 3; k++) {
+          const lx = wx + t * k + t / 2;
+          push(`<line x1="${lx.toFixed(1)}" y1="${wy - EXT + 2}" x2="${lx.toFixed(1)}" y2="${wy + EXT - 2}" stroke="#333" stroke-width="1"/>`);
+        }
+      } else {
+        const wx = W_WALL === 'W' ? X(r.x) : X(r.x + r.w);
+        const wy = Y(r.y + pos);
+        push(`<rect x="${wx - EXT - 1}" y="${wy}" width="${EXT * 2 + 2}" height="${wpx}" fill="white" stroke="none"/>`);
+        push(`<rect x="${wx - EXT}" y="${wy}" width="${EXT * 2}" height="${wpx}" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>`);
+        const t = wpx / 3;
+        for (let k = 0; k < 3; k++) {
+          const ly = wy + t * k + t / 2;
+          push(`<line x1="${wx - EXT + 2}" y1="${ly.toFixed(1)}" x2="${wx + EXT - 2}" y2="${ly.toFixed(1)}" stroke="#333" stroke-width="1"/>`);
+        }
+      }
+    });
+  });
 
-════ COTAS ════
-Línea de cota: stroke="#999" stroke-width="0.7"
-Ticks en extremos: líneas de 4px a 90° del eje de cota
-Texto: <text font-size="9" font-family="Arial, sans-serif" fill="#555" text-anchor="middle">X.XXm</text>
+  // Dimension — total width (bottom)
+  const dimY = Y(spec.height) + EXT + 32;
+  const x0 = X(0), xW = X(spec.width);
+  push(`<line x1="${x0}" y1="${dimY}" x2="${xW}" y2="${dimY}" stroke="#666" stroke-width="0.8"/>`);
+  push(`<line x1="${x0}" y1="${dimY - 5}" x2="${x0}" y2="${dimY + 5}" stroke="#666" stroke-width="1"/>`);
+  push(`<line x1="${xW}" y1="${dimY - 5}" x2="${xW}" y2="${dimY + 5}" stroke="#666" stroke-width="1"/>`);
+  push(`<text x="${((x0 + xW) / 2).toFixed(1)}" y="${dimY + 13}" font-size="10" text-anchor="middle" fill="#444">${spec.width.toFixed(2)}m</text>`);
 
-════ FLECHA NORTE ════
-Esquina superior derecha (x≈850, y≈70):
-<circle cx="850" cy="60" r="12" fill="none" stroke="#000" stroke-width="1"/>
-<polygon points="850,48 845,68 850,63 855,68" fill="#000"/>
-<text x="850" y="45" font-size="10" font-family="Arial,sans-serif" text-anchor="middle" fill="#000">N</text>
+  // Dimension — total height (right)
+  const dimX = X(spec.width) + EXT + 32;
+  const y0 = Y(0), yH = Y(spec.height);
+  push(`<line x1="${dimX}" y1="${y0}" x2="${dimX}" y2="${yH}" stroke="#666" stroke-width="0.8"/>`);
+  push(`<line x1="${dimX - 5}" y1="${y0}" x2="${dimX + 5}" y2="${y0}" stroke="#666" stroke-width="1"/>`);
+  push(`<line x1="${dimX - 5}" y1="${yH}" x2="${dimX + 5}" y2="${yH}" stroke="#666" stroke-width="1"/>`);
+  const dimMY = ((y0 + yH) / 2).toFixed(1);
+  push(`<text x="${dimX + 14}" y="${dimMY}" font-size="10" text-anchor="middle" fill="#444" transform="rotate(-90 ${dimX + 14} ${dimMY})">${spec.height.toFixed(2)}m</text>`);
 
-════ CAJETÍN ════
-Rectángulo inferior derecho x=680 y=600 width=200 height=70, fill="white" stroke="#000" stroke-width="0.8"
-Contiene: título del proyecto, escala, fecha. font-size="8" font-family="Arial,sans-serif"`;
+  // North arrow
+  const NA = CW - 50, NAy = 55;
+  push(`<circle cx="${NA}" cy="${NAy}" r="14" fill="none" stroke="#111" stroke-width="1.2"/>`);
+  push(`<polygon points="${NA},${NAy - 11} ${NA - 5},${NAy + 9} ${NA},${NAy + 5} ${NA + 5},${NAy + 9}" fill="#111"/>`);
+  push(`<text x="${NA}" y="${NAy - 18}" font-size="10" text-anchor="middle" fill="#111" font-weight="bold">N</text>`);
+
+  // Title block
+  const TBx = CW - 220, TBy = CH - 72, TBw = 210, TBh = 62;
+  const scaleVal = Math.round(1000 / scale);
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2,'0');
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const yyyy = today.getFullYear();
+  push(`<rect x="${TBx}" y="${TBy}" width="${TBw}" height="${TBh}" fill="white" stroke="#333" stroke-width="0.8"/>`);
+  push(`<line x1="${TBx}" y1="${TBy + 22}" x2="${TBx + TBw}" y2="${TBy + 22}" stroke="#333" stroke-width="0.5"/>`);
+  push(`<line x1="${TBx}" y1="${TBy + 42}" x2="${TBx + TBw}" y2="${TBy + 42}" stroke="#333" stroke-width="0.5"/>`);
+  push(`<text x="${TBx + TBw/2}" y="${TBy + 15}" font-size="9" text-anchor="middle" fill="#111" font-weight="bold">${sa(spec.title || 'Plano de vivienda')}</text>`);
+  push(`<text x="${TBx + TBw/2}" y="${TBy + 35}" font-size="8" text-anchor="middle" fill="#333">Planta baja  |  Esc. 1:${scaleVal}</text>`);
+  push(`<text x="${TBx + TBw/2}" y="${TBy + 55}" font-size="8" text-anchor="middle" fill="#555">${dd}/${mm}/${yyyy}</text>`);
+
+  push(`</svg>`);
+  return p.join('\n');
+}
 
 
 
@@ -297,9 +389,8 @@ export default async function handler(req, res) {
   const history = messages.map(m => ({ role: m.role, content: m.content }));
 
   try {
-    // ── Sketch (two-phase: architect → draughtsman) ──
+    // ── Sketch (architect → JSON → JS renders SVG) ──
     if (intent === "sketch") {
-      // Phase 1: architect interprets request and produces full spec
       const archMsg = await client.messages.create({
         model: MODELS.smart, max_tokens: 1500,
         system: ARCHITECT_SYSTEM,
@@ -307,32 +398,34 @@ export default async function handler(req, res) {
       });
       const archResponse = archMsg.content[0]?.text ?? "";
 
-      // Split architect response into user-facing text and SVG spec
-      const specSplit = archResponse.split("---SVG-SPEC---");
-      const userText  = specSplit[0].trim();
-      const svgSpec   = specSplit[1]?.trim() ?? archResponse;
+      // Extract user-facing text
+      const textMatch = archResponse.match(/\[TEXTO\]([\s\S]*?)\[\/TEXTO\]/i);
+      const userText  = textMatch ? textMatch[1].trim() : "";
 
-      // Phase 2: draughtsman draws SVG from spec — outputs ONLY SVG
-      const drawMsg = await client.messages.create({
-        model: MODELS.smart, max_tokens: 8000,
-        system: SKETCH_SYSTEM,
-        messages: [{ role: "user", content: svgSpec }],
-      });
-      let svg = drawMsg.content[0]?.text ?? "";
-      svg = svg.replace(/```svg\n?/gi, "").replace(/```\n?/g, "").trim();
-
-      const svgMatch = svg.match(/<svg[\s\S]*<\/svg>/i);
-      if (!svgMatch) {
+      // Extract JSON spec
+      const jsonMatch = archResponse.match(/\[JSON\]([\s\S]*?)\[\/JSON\]/i);
+      if (!jsonMatch) {
         return res.json({
-          content: userText || "He analizado el encargo pero no pude generar el plano. Intenta con más detalles de dimensiones.",
+          content: userText || "No pude generar la distribución. Intenta con más detalle (m², número de habitaciones, dimensiones).",
           tool: "chat", model: MODELS.smart,
         });
       }
 
+      let spec;
+      try {
+        spec = JSON.parse(jsonMatch[1].trim());
+      } catch {
+        return res.json({
+          content: userText || "Error procesando la distribución. Intenta de nuevo.",
+          tool: "chat", model: MODELS.smart,
+        });
+      }
+
+      const svg = buildFloorPlanSVG(spec);
       return res.json({
         content: userText || "Aquí tienes el plano:",
         tool: "sketch", model: MODELS.smart,
-        svg: svgMatch[0],
+        svg,
       });
     }
 
