@@ -401,25 +401,39 @@ export default async function handler(req, res) {
   try {
     // ── Sketch (architect → JSON → JS renders SVG) ──
     if (intent === "sketch") {
-      // Recover previous spec from history (stored as hidden comment in assistant content)
-      const prevSpecMsg = [...history].reverse()
-        .find(m => m.role === "assistant" && m.content?.includes("<!--SPEC:"));
-      const prevSpecJSON = prevSpecMsg?.content?.match(/<!--SPEC:([\s\S]*?)-->/)?.[1]?.trim();
+      // Extract the LATEST spec from history (ignore older ones)
+      const allSpecs = history
+        .filter(m => m.role === "assistant" && m.content?.includes("<!--SPEC:"))
+        .map(m => m.content?.match(/<!--SPEC:([\s\S]*?)-->/)?.[1]?.trim())
+        .filter(Boolean);
+      const prevSpecJSON = allSpecs[allSpecs.length - 1] ?? null;
 
-      // If there's a previous spec, tell the architect to only apply changes
+      // Clean history — strip ALL spec comments to prevent context pollution
+      const cleanHistory = history.map(m => ({
+        role: m.role,
+        content: (m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim(),
+      }));
+
+      // Build architect system — inject last spec cleanly
       const archSystem = prevSpecJSON
         ? `${ARCHITECT_SYSTEM}
 
-PLANO ACTUAL EN PANTALLA — JSON exacto:
+═══ PLANO ACTUAL EN PANTALLA ═══
 ${prevSpecJSON}
+═══════════════════════════════
 
-INSTRUCCIÓN CRÍTICA: Aplica SOLO los cambios que pide el usuario en su último mensaje. Todo lo demás (posiciones, tamaños, nombres, puertas, ventanas) debe quedar EXACTAMENTE igual que en el JSON de arriba. No te inventes nada nuevo.`
+INSTRUCCIÓN CRÍTICA para cambios:
+1. Lee el último mensaje del usuario e identifica EXACTAMENTE qué quiere cambiar
+2. Lista internamente cada cambio antes de aplicarlo
+3. Aplica cada cambio verificando que no rompe las dimensiones totales ni crea solapamientos
+4. Todo lo que el usuario NO mencionó queda IDÉNTICO al JSON de arriba
+5. No añadas ni quites habitaciones salvo que se pida explícitamente`
         : ARCHITECT_SYSTEM;
 
       const archMsg = await client.messages.create({
         model: MODELS.smart, max_tokens: 1500,
         system: archSystem,
-        messages: history,
+        messages: cleanHistory,
       });
       const archResponse = archMsg.content[0]?.text ?? "";
 
