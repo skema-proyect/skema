@@ -19,17 +19,28 @@ export default async function handler(req, res) {
 
   const normalizedCode = code.trim().toUpperCase();
 
-  // Validar código de acceso (service role bypasses RLS)
-  const { data: invite, error: inviteErr } = await adminClient
-    .from("invite_codes")
-    .select("id, used")
-    .eq("code", normalizedCode)
-    .maybeSingle();
+  // Validar código de acceso via fetch directo (bypass JS client)
+  const sbUrl = process.env.SUPABASE_URL;
+  const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const fetchUrl = `${sbUrl}/rest/v1/invite_codes?code=eq.${encodeURIComponent(normalizedCode)}&select=id,used&limit=1`;
 
-  if (inviteErr || !invite) {
+  let invite = null;
+  let fetchError = null;
+  try {
+    const r = await fetch(fetchUrl, {
+      headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` }
+    });
+    const rows = await r.json();
+    if (Array.isArray(rows) && rows.length > 0) invite = rows[0];
+    else fetchError = JSON.stringify(rows);
+  } catch (e) {
+    fetchError = e.message;
+  }
+
+  if (!invite) {
     return res.status(400).json({
       error: "Código de acceso inválido",
-      _debug: { code: normalizedCode, supabaseError: inviteErr?.message ?? null }
+      _debug: { code: normalizedCode, fetchError, urlPrefix: sbUrl?.slice(0, 40) }
     });
   }
   if (invite.used === true) {
