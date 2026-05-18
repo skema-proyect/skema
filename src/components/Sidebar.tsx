@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Plus, ChevronDown, ChevronRight,
   MessageSquare, FolderOpen, Trash2,
   StickyNote, Calendar, PenLine, X, Download,
-  LogOut, ShieldCheck,
+  LogOut, ShieldCheck, FolderInput,
 } from "lucide-react";
 import { projects as projectsDB, conversations as convsDB } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
@@ -94,6 +94,11 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
     e.stopPropagation();
     await convsDB.delete(id);
     if (currentConvId === id) onNewChat();
+    convsDB.getAll().then(setAllConvs);
+  };
+
+  const moveConv = async (convId: string, projectId: string | null) => {
+    await convsDB.assignProject(convId, projectId);
     convsDB.getAll().then(setAllConvs);
   };
 
@@ -196,7 +201,8 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
                 {open && convs.map(c => (
                   <ConvItem key={c.id} conv={c} active={currentConvId === c.id}
                     onSelect={() => { onSelectConv(c.id); navigate("/"); onClose?.(); }}
-                    onDelete={deleteConv} indent
+                    onDelete={deleteConv} onMove={moveConv}
+                    projects={allProjects} indent
                   />
                 ))}
               </div>
@@ -211,7 +217,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
             {loose.map(c => (
               <ConvItem key={c.id} conv={c} active={currentConvId === c.id}
                 onSelect={() => { onSelectConv(c.id); navigate("/"); onClose?.(); }}
-                onDelete={deleteConv}
+                onDelete={deleteConv} onMove={moveConv} projects={allProjects}
               />
             ))}
           </div>
@@ -278,21 +284,69 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   );
 }
 
-function ConvItem({ conv, active, onSelect, onDelete, indent = false }: {
+function ConvItem({ conv, active, onSelect, onDelete, onMove, projects, indent = false }: {
   conv: Conversation; active: boolean;
   onSelect: () => void;
   onDelete: (e: React.MouseEvent, id: string) => void;
+  onMove: (convId: string, projectId: string | null) => void;
+  projects: Project[];
   indent?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
   return (
-    <div onClick={onSelect}
-      className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${indent ? "ml-4" : ""} ${active ? "bg-s-sidebar-hover" : "hover:bg-s-sidebar-hover"}`}>
+    <div ref={ref} onClick={onSelect}
+      className={`relative flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${indent ? "ml-4" : ""} ${active ? "bg-s-sidebar-hover" : "hover:bg-s-sidebar-hover"}`}>
       <MessageSquare size={12} className="text-s-sidebar-muted flex-shrink-0" />
       <span className="flex-1 text-[15px] truncate text-s-sidebar-text">{conv.title}</span>
-      <button onClick={e => onDelete(e, conv.id)}
-        className="hidden group-hover:flex p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted hover:text-s-danger">
-        <Trash2 size={11} />
-      </button>
+      <div className="hidden group-hover:flex items-center gap-0.5">
+        {projects.length > 0 && (
+          <button
+            onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+            className="p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted hover:text-s-sidebar-text"
+            title="Mover a proyecto"
+          >
+            <FolderInput size={11} />
+          </button>
+        )}
+        <button onClick={e => onDelete(e, conv.id)}
+          className="p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted hover:text-s-danger">
+          <Trash2 size={11} />
+        </button>
+      </div>
+      {open && (
+        <div
+          onClick={e => e.stopPropagation()}
+          className="absolute right-0 top-full mt-1 z-50 bg-s-sidebar border border-s-sidebar-border rounded-lg shadow-lg py-1 min-w-[160px]"
+        >
+          {conv.projectId && (
+            <button
+              onClick={() => { onMove(conv.id, null); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-[13px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
+            >
+              Sin proyecto
+            </button>
+          )}
+          {projects.map(p => (
+            <button key={p.id}
+              onClick={() => { onMove(conv.id, p.id); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-[13px] hover:bg-s-sidebar-hover ${conv.projectId === p.id ? "text-s-sidebar-text font-medium" : "text-s-sidebar-muted hover:text-s-sidebar-text"}`}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
