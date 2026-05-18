@@ -28,8 +28,6 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [allConvs,    setAllConvs]    = useState<Conversation[]>([]);
   const [expanded,    setExpanded]    = useState<Record<string, boolean>>({});
-  const [renaming,    setRenaming]    = useState<string | null>(null);
-  const [nameVal,     setNameVal]     = useState("");
   const [newProj,     setNewProj]     = useState(false);
   const [newName,     setNewName]     = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -83,16 +81,6 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
     }
   };
 
-  const startRename = (e: React.MouseEvent, p: Project) => {
-    e.stopPropagation();
-    setRenaming(p.id); setNameVal(p.name);
-  };
-
-  const confirmRename = async (id: string) => {
-    if (nameVal.trim()) await projectsDB.rename(id, nameVal.trim());
-    setRenaming(null);
-    projectsDB.getAll().then(setAllProjects);
-  };
 
 
   const deleteConv = async (e: React.MouseEvent, id: string) => {
@@ -195,7 +183,6 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
                     {p.name}
                   </button>
                   <div className="hidden group-hover:flex items-center gap-0.5">
-                    <button onClick={e => startRename(e, p)} className="p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted"><PenLine size={11} /></button>
                     <button onClick={e => deleteProject(e, p.id)} className="p-0.5 rounded hover:bg-white/10 text-s-danger"><Trash2 size={11} /></button>
                   </div>
                   <span className="text-[10px] text-s-sidebar-muted">{convs.length}</span>
