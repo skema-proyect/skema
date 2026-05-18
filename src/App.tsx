@@ -6,6 +6,7 @@ import NotesView from "@/pages/NotesView";
 import AgendaView from "@/pages/AgendaView";
 import AuthPage from "@/pages/AuthPage";
 import AdminPage from "@/pages/AdminPage";
+import ProjectView from "@/pages/ProjectView";
 
 function AppRoutes() {
   const { user, profile, loading } = useAuth();
@@ -24,8 +25,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<ChatView />} />
-        <Route path="notas"  element={<NotesView />} />
-        <Route path="agenda" element={<AgendaView />} />
+        <Route path="notas"         element={<NotesView />} />
+        <Route path="agenda"        element={<AgendaView />} />
+        <Route path="proyecto/:id"  element={<ProjectView />} />
         {profile?.role === "admin" && (
           <Route path="admin" element={<AdminPage />} />
         )}

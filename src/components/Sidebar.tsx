@@ -4,7 +4,7 @@ import {
   Plus, ChevronDown, ChevronRight,
   MessageSquare, FolderOpen, Trash2,
   StickyNote, Calendar, PenLine, X, Download,
-  LogOut, ShieldCheck, FolderInput, AlignLeft,
+  LogOut, ShieldCheck, FolderInput,
 } from "lucide-react";
 import { projects as projectsDB, conversations as convsDB } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
@@ -32,8 +32,6 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   const [nameVal,     setNameVal]     = useState("");
   const [newProj,     setNewProj]     = useState(false);
   const [newName,     setNewName]     = useState("");
-  const [editingInstr, setEditingInstr] = useState<string | null>(null);
-  const [instrVal,     setInstrVal]     = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed,     setInstalled]     = useState(false);
   const isStandalone = typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
@@ -96,17 +94,6 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
     projectsDB.getAll().then(setAllProjects);
   };
 
-  const openInstr = (e: React.MouseEvent, p: Project) => {
-    e.stopPropagation();
-    setEditingInstr(p.id);
-    setInstrVal(p.instructions ?? "");
-  };
-
-  const saveInstr = async (id: string) => {
-    await projectsDB.update(id, { instructions: instrVal });
-    setEditingInstr(null);
-    projectsDB.getAll().then(setAllProjects);
-  };
 
   const deleteConv = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -191,50 +178,28 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
             const open  = expanded[p.id];
             return (
               <div key={p.id}>
-                <div
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-s-sidebar-hover cursor-pointer group"
-                  onClick={() => toggleProject(p.id)}
-                >
-                  {open
-                    ? <ChevronDown  size={13} className="text-s-sidebar-muted flex-shrink-0" />
-                    : <ChevronRight size={13} className="text-s-sidebar-muted flex-shrink-0" />}
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded group">
+                  {/* Chevron — solo expand/collapse */}
+                  <button
+                    onClick={() => toggleProject(p.id)}
+                    className="p-0.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted flex-shrink-0"
+                  >
+                    {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </button>
                   <FolderOpen size={13} className="text-s-sidebar-muted flex-shrink-0" />
-                  {renaming === p.id ? (
-                    <input
-                      autoFocus value={nameVal} onChange={e => setNameVal(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") confirmRename(p.id); if (e.key === "Escape") setRenaming(null); }}
-                      onBlur={() => confirmRename(p.id)}
-                      className="flex-1 bg-transparent text-s-sidebar-text text-[12px] outline-none border-b border-s-sidebar-muted"
-                      onClick={e => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className="flex-1 text-[15px] truncate">{p.name}</span>
-                  )}
+                  {/* Nombre — navega a la vista del proyecto */}
+                  <button
+                    onClick={() => { navigate(`/proyecto/${p.id}`); onClose?.(); }}
+                    className="flex-1 text-left text-[15px] truncate text-s-sidebar-text hover:text-white transition-colors min-w-0"
+                  >
+                    {p.name}
+                  </button>
                   <div className="hidden group-hover:flex items-center gap-0.5">
-                    <button onClick={e => openInstr(e, p)} className="p-0.5 rounded hover:bg-white/10" title="Instrucciones"><AlignLeft size={11} /></button>
-                    <button onClick={e => startRename(e, p)} className="p-0.5 rounded hover:bg-white/10"><PenLine size={11} /></button>
+                    <button onClick={e => startRename(e, p)} className="p-0.5 rounded hover:bg-white/10 text-s-sidebar-muted"><PenLine size={11} /></button>
                     <button onClick={e => deleteProject(e, p.id)} className="p-0.5 rounded hover:bg-white/10 text-s-danger"><Trash2 size={11} /></button>
                   </div>
                   <span className="text-[10px] text-s-sidebar-muted">{convs.length}</span>
                 </div>
-                {editingInstr === p.id && (
-                  <div className="mx-2 mb-2 p-2 bg-s-sidebar-hover rounded-lg" onClick={e => e.stopPropagation()}>
-                    <p className="text-[10px] text-s-sidebar-muted uppercase tracking-wider mb-1.5">Instrucciones del proyecto</p>
-                    <textarea
-                      autoFocus
-                      value={instrVal}
-                      onChange={e => setInstrVal(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Escape") setEditingInstr(null); }}
-                      placeholder="Ej: Este proyecto es una vivienda unifamiliar en Las Palmas..."
-                      rows={4}
-                      className="w-full bg-transparent text-[12px] text-s-sidebar-text placeholder:text-s-sidebar-muted outline-none resize-none leading-relaxed"
-                    />
-                    <div className="flex justify-end gap-2 mt-1.5">
-                      <button onClick={() => setEditingInstr(null)} className="text-[11px] text-s-sidebar-muted hover:text-s-sidebar-text">Cancelar</button>
-                      <button onClick={() => saveInstr(p.id)} className="text-[11px] text-s-sidebar-text font-medium hover:opacity-70">Guardar</button>
-                    </div>
-                  </div>
-                )}
                 {open && convs.map(c => (
                   <ConvItem key={c.id} conv={c} active={currentConvId === c.id}
                     onSelect={() => { onSelectConv(c.id); navigate("/"); onClose?.(); }}
