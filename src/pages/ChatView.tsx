@@ -3,7 +3,7 @@ import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { conversations as convsDB, uid, now } from "@/lib/db";
+import { conversations as convsDB, projects as projectsDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
 import type { Message } from "@/types";
@@ -24,6 +24,7 @@ export default function ChatView() {
   const [loading,         setLoading]         = useState(false);
   const [loadingSeconds,  setLoadingSeconds]  = useState(0);
   const [listening,       setListening]       = useState(false);
+  const [projectInstructions, setProjectInstructions] = useState<string | null>(null);
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
   const recognitionRef  = useRef<any>(null);
@@ -34,10 +35,19 @@ export default function ChatView() {
   // Keep ref in sync so closures always see the latest convId
   useEffect(() => { convIdRef.current = currentConvId; }, [currentConvId]);
 
-  // Load conversation from Supabase when convId changes
+  // Load conversation + project instructions when convId changes
   useEffect(() => {
-    if (!currentConvId) { setMessages([]); return; }
-    convsDB.get(currentConvId).then(conv => setMessages(conv?.messages ?? []));
+    if (!currentConvId) { setMessages([]); setProjectInstructions(null); return; }
+    convsDB.get(currentConvId).then(async conv => {
+      setMessages(conv?.messages ?? []);
+      if (conv?.projectId) {
+        const allProjects = await projectsDB.getAll();
+        const proj = allProjects.find(p => p.id === conv.projectId);
+        setProjectInstructions(proj?.instructions ?? null);
+      } else {
+        setProjectInstructions(null);
+      }
+    });
   }, [currentConvId]);
 
   // Load initial prompt from navigation state
@@ -98,7 +108,7 @@ export default function ChatView() {
     try {
       const res  = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, projectInstructions: projectInstructions ?? undefined }),
       });
       const data = await res.json();
 

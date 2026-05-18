@@ -408,8 +408,12 @@ function selectModel(message) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [] } = req.body;
+  const { messages = [], projectInstructions } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
+
+  const projectContext = projectInstructions?.trim()
+    ? `\n\nCONTEXTO DEL PROYECTO:\n${projectInstructions.trim()}`
+    : "";
 
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
@@ -443,7 +447,7 @@ export default async function handler(req, res) {
       if (hasExistingPlan && !GENERATE_TRIGGER.test(lastUser.content)) {
         const discussMsg = await client.messages.create({
           model: MODELS.smart, max_tokens: 500,
-          system: SKETCH_CHAT_SYSTEM,
+          system: SKETCH_CHAT_SYSTEM + projectContext,
           messages: cleanHistory,
         });
         const discussText = discussMsg.content[0]?.text ?? "";
@@ -523,9 +527,7 @@ INSTRUCCIÓN CRÍTICA para cambios:
     if (intent === "normativa") {
       // Enrich with local database if available
       const dbContext = await lookupNormativa(lastUser.content);
-      const system = dbContext
-        ? `${NORMATIVA_SYSTEM}\n\n${dbContext}`
-        : NORMATIVA_SYSTEM;
+      const system = (dbContext ? `${NORMATIVA_SYSTEM}\n\n${dbContext}` : NORMATIVA_SYSTEM) + projectContext;
 
       const msg = await client.messages.create({
         model: MODELS.smart, max_tokens: 2048,
@@ -538,7 +540,7 @@ INSTRUCCIÓN CRÍTICA para cambios:
     if (intent === "document") {
       const msg = await client.messages.create({
         model: MODELS.smart, max_tokens: 3000,
-        system: DOCUMENT_SYSTEM, messages: history,
+        system: DOCUMENT_SYSTEM + projectContext, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
     }
@@ -557,7 +559,7 @@ INSTRUCCIÓN CRÍTICA para cambios:
     const model = selectModel(lastUser.content);
     const msg   = await client.messages.create({
       model, max_tokens: 1500,
-      system: SYSTEM, messages: history,
+      system: SYSTEM + projectContext, messages: history,
     });
     return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model });
 
