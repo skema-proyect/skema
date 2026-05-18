@@ -1,7 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
+const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+
+// Anon client — para leer códigos (respeta RLS + política SELECT pública)
+const anonClient = createClient(
+  supabaseUrl,
+  process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY
+);
+
+// Admin client — para crear usuarios y marcar código como usado
+const adminClient = createClient(
+  supabaseUrl,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
@@ -17,22 +26,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
   }
 
-  // Validate invite code
-  const { data: invite, error: inviteErr } = await supabase
+  const normalizedCode = code.trim().toUpperCase();
+
+  // Validar código de acceso
+  const { data: invite, error: inviteErr } = await anonClient
     .from("invite_codes")
     .select("id, used")
-    .eq("code", code.trim().toUpperCase())
+    .eq("code", normalizedCode)
+    .eq("used", false)
     .single();
 
   if (inviteErr || !invite) {
-    return res.status(400).json({ error: "Código de acceso inválido" });
-  }
-  if (invite.used) {
-    return res.status(400).json({ error: "Este código ya ha sido utilizado" });
+    return res.status(400).json({ error: "Código de acceso inválido o ya utilizado" });
   }
 
-  // Create user via admin API (bypasses "disable signups" setting)
-  const { data: userData, error: userErr } = await supabase.auth.admin.createUser({
+  // Crear usuario
+  const { data: userData, error: userErr } = await adminClient.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
@@ -46,8 +55,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: msg });
   }
 
-  // Mark code as used
-  await supabase
+  // Marcar código como usado
+  await adminClient
     .from("invite_codes")
     .update({ used: true, used_at: new Date().toISOString(), used_by: userData.user.id })
     .eq("id", invite.id);
