@@ -4,41 +4,49 @@ import {
   Plus, ChevronDown, ChevronRight,
   MessageSquare, FolderOpen, Trash2,
   StickyNote, Calendar, PenLine, X, Download,
+  LogOut, ShieldCheck,
 } from "lucide-react";
-import { projects as projectsDB, conversations as convsDB } from "@/lib/storage";
+import { projects as projectsDB, conversations as convsDB } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
+import { useAuth } from "@/lib/auth";
 import type { Project, Conversation } from "@/types";
 
 interface Props {
   currentConvId: string | null;
-  onSelectConv: (id: string) => void;
-  onNewChat: () => void;
+  onSelectConv:    (id: string) => void;
+  onNewChat:       () => void;
   onServiceSelect: (prompt: string) => void;
-  onClose?: () => void;
-  refresh: number;
+  onClose?:        () => void;
+  refresh:         number;
 }
 
-export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServiceSelect, onClose, refresh: _ }: Props) {
+export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServiceSelect, onClose, refresh }: Props) {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const [expanded, setExpanded]   = useState<Record<string, boolean>>({});
-  const [renaming, setRenaming]   = useState<string | null>(null);
-  const [nameVal,  setNameVal]    = useState("");
-  const [newProj,  setNewProj]    = useState(false);
-  const [newName,  setNewName]    = useState("");
+  const { profile, signOut } = useAuth();
+
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [allConvs,    setAllConvs]    = useState<Conversation[]>([]);
+  const [expanded,    setExpanded]    = useState<Record<string, boolean>>({});
+  const [renaming,    setRenaming]    = useState<string | null>(null);
+  const [nameVal,     setNameVal]     = useState("");
+  const [newProj,     setNewProj]     = useState(false);
+  const [newName,     setNewName]     = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [installed, setInstalled] = useState(false);
+  const [installed,     setInstalled]     = useState(false);
   const isStandalone = typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setInstallPrompt(e as BeforeInstallPromptEvent);
-    };
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e as BeforeInstallPromptEvent); };
     window.addEventListener("beforeinstallprompt", handler);
     window.addEventListener("appinstalled", () => setInstalled(true));
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
+
+  useEffect(() => {
+    projectsDB.getAll().then(setAllProjects);
+    convsDB.getAll().then(setAllConvs);
+  }, [refresh]);
 
   const handleInstall = async () => {
     if (installPrompt) {
@@ -50,23 +58,25 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
     }
   };
 
-  const allProjects = projectsDB.getAll();
-  const allConvs    = convsDB.getAll();
-  const loose       = allConvs.filter(c => !c.projectId);
+  const loose = allConvs.filter(c => !c.projectId);
 
   const toggleProject = (id: string) =>
     setExpanded(e => ({ ...e, [id]: !e[id] }));
 
-  const createProject = () => {
+  const createProject = async () => {
     if (!newName.trim()) return;
-    projectsDB.create(newName.trim());
+    await projectsDB.create(newName.trim());
     setNewName(""); setNewProj(false);
+    projectsDB.getAll().then(setAllProjects);
   };
 
-  const deleteProject = (e: React.MouseEvent, id: string) => {
+  const deleteProject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm("¿Eliminar proyecto? Las conversaciones quedarán sin asignar."))
-      projectsDB.delete(id);
+    if (confirm("¿Eliminar proyecto? Las conversaciones quedarán sin asignar.")) {
+      await projectsDB.delete(id);
+      projectsDB.getAll().then(setAllProjects);
+      convsDB.getAll().then(setAllConvs);
+    }
   };
 
   const startRename = (e: React.MouseEvent, p: Project) => {
@@ -74,28 +84,26 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
     setRenaming(p.id); setNameVal(p.name);
   };
 
-  const confirmRename = (id: string) => {
-    if (nameVal.trim()) projectsDB.rename(id, nameVal.trim());
+  const confirmRename = async (id: string) => {
+    if (nameVal.trim()) await projectsDB.rename(id, nameVal.trim());
     setRenaming(null);
+    projectsDB.getAll().then(setAllProjects);
   };
 
-  const deleteConv = (e: React.MouseEvent, id: string) => {
+  const deleteConv = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    convsDB.delete(id);
+    await convsDB.delete(id);
     if (currentConvId === id) onNewChat();
+    convsDB.getAll().then(setAllConvs);
   };
 
-  const goTo = (path: string) => {
-    navigate(path);
-    onClose?.();
-  };
-
+  const goTo = (path: string) => { navigate(path); onClose?.(); };
   const isActive = (path: string) => location.pathname === path;
 
   return (
     <div className="flex flex-col h-full bg-s-sidebar text-s-sidebar-text select-none relative">
 
-      {/* Header — logo + cerrar */}
+      {/* Header */}
       <div className="flex items-center justify-between px-3 pt-4 pb-3 border-b border-s-sidebar-border">
         <button
           onClick={() => { onNewChat(); onClose?.(); }}
@@ -156,16 +164,21 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           )}
 
           {allProjects.map(p => {
-            const convs: Conversation[] = allConvs.filter(c => c.projectId === p.id);
-            const open = expanded[p.id];
+            const convs = allConvs.filter(c => c.projectId === p.id);
+            const open  = expanded[p.id];
             return (
               <div key={p.id}>
-                <div className="flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-s-sidebar-hover cursor-pointer group" onClick={() => toggleProject(p.id)}>
-                  {open ? <ChevronDown size={13} className="text-s-sidebar-muted flex-shrink-0" />
-                         : <ChevronRight size={13} className="text-s-sidebar-muted flex-shrink-0" />}
+                <div
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-s-sidebar-hover cursor-pointer group"
+                  onClick={() => toggleProject(p.id)}
+                >
+                  {open
+                    ? <ChevronDown  size={13} className="text-s-sidebar-muted flex-shrink-0" />
+                    : <ChevronRight size={13} className="text-s-sidebar-muted flex-shrink-0" />}
                   <FolderOpen size={13} className="text-s-sidebar-muted flex-shrink-0" />
                   {renaming === p.id ? (
-                    <input autoFocus value={nameVal} onChange={e => setNameVal(e.target.value)}
+                    <input
+                      autoFocus value={nameVal} onChange={e => setNameVal(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") confirmRename(p.id); if (e.key === "Escape") setRenaming(null); }}
                       onBlur={() => confirmRename(p.id)}
                       className="flex-1 bg-transparent text-s-sidebar-text text-[12px] outline-none border-b border-s-sidebar-muted"
@@ -220,7 +233,15 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           <Calendar size={15} /> Agenda
         </button>
 
-        {/* Install button — solo móvil web (no desktop, no PWA instalada) */}
+        {profile?.role === "admin" && (
+          <button onClick={() => goTo("/admin")}
+            className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
+              isActive("/admin") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
+            }`}>
+            <ShieldCheck size={15} /> Admin
+          </button>
+        )}
+
         {!installed && !isStandalone && (
           <button onClick={handleInstall}
             className="lg:hidden w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors">
@@ -228,16 +249,26 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
           </button>
         )}
 
-        <div className="px-2 pt-1">
-          <p className="text-[12px] text-s-sidebar-muted">SKEMA v0.1 · Piloto</p>
-          <p className="text-[11px] text-s-sidebar-muted mt-0.5">Desarrollado por ai-connect.es</p>
+        {/* User + logout */}
+        <div className="flex items-center justify-between px-2 pt-2 mt-1 border-t border-s-sidebar-border">
+          <div className="min-w-0">
+            <p className="text-[12px] text-s-sidebar-text truncate">{profile?.name ?? profile?.email ?? ""}</p>
+            <p className="text-[11px] text-s-sidebar-muted">SKEMA v0.1</p>
+          </div>
+          <button
+            onClick={signOut}
+            className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted hover:text-s-sidebar-text transition-colors flex-shrink-0"
+            title="Cerrar sesión"
+          >
+            <LogOut size={14} />
+          </button>
         </div>
       </div>
 
       {/* FAB — Nuevo chat */}
       <button
         onClick={() => { onNewChat(); onClose?.(); }}
-        className="lg:hidden absolute bottom-20 right-4 flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[15px] font-medium shadow-lg hover:opacity-90 transition-opacity"
+        className="lg:hidden absolute bottom-24 right-4 flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[15px] font-medium shadow-lg hover:opacity-90 transition-opacity"
         title="Nuevo chat"
       >
         <PenLine size={16} />
@@ -247,10 +278,11 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
   );
 }
 
-// ── Sub-component ─────────────────────────────────────────────────────────────
 function ConvItem({ conv, active, onSelect, onDelete, indent = false }: {
   conv: Conversation; active: boolean;
-  onSelect: () => void; onDelete: (e: React.MouseEvent, id: string) => void; indent?: boolean;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent, id: string) => void;
+  indent?: boolean;
 }) {
   return (
     <div onClick={onSelect}
@@ -265,7 +297,6 @@ function ConvItem({ conv, active, onSelect, onDelete, indent = false }: {
   );
 }
 
-// Type declaration for PWA install prompt
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;

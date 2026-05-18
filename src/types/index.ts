@@ -1,6 +1,7 @@
 export interface Project {
   id: string;
   name: string;
+  instructions?: string;
   createdAt: string;
 }
 
@@ -8,7 +9,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  tool?: "chat" | "sketch" | "normativa" | "document" | "research";
+  tool?: "chat" | "sketch" | "normativa" | "document" | "research" | "search";
   model?: string;
   svg?: string;
   timestamp: string;

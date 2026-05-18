@@ -3,8 +3,9 @@ import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { conversations as convsDB } from "@/lib/storage";
+import { conversations as convsDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
+import { useAuth } from "@/lib/auth";
 import type { Message } from "@/types";
 
 interface OutletCtx {
@@ -16,35 +17,40 @@ interface OutletCtx {
 export default function ChatView() {
   const { currentConvId, setCurrentConvId, bump } = useOutletContext<OutletCtx>();
   const location = useLocation();
+  const { profile } = useAuth();
 
-  const conv      = currentConvId ? convsDB.get(currentConvId) : null;
-  const messages  = conv?.messages ?? [];
+  const [messages,        setMessages]        = useState<Message[]>([]);
+  const [input,           setInput]           = useState("");
+  const [loading,         setLoading]         = useState(false);
+  const [loadingSeconds,  setLoadingSeconds]  = useState(0);
+  const [listening,       setListening]       = useState(false);
+  const bottomRef       = useRef<HTMLDivElement>(null);
+  const textareaRef     = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef  = useRef<any>(null);
+  const finalsRef       = useRef<string>("");
+  const pendingSendRef  = useRef<boolean>(false);
+  const convIdRef       = useRef<string | null>(currentConvId);
 
-  const [input,          setInput]          = useState("");
-  const [loading,        setLoading]        = useState(false);
-  const [loadingSeconds, setLoadingSeconds] = useState(0);
-  const [listening,      setListening]      = useState(false);
-  const bottomRef        = useRef<HTMLDivElement>(null);
-  const textareaRef      = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef   = useRef<any>(null);
-  const finalsRef        = useRef<string>("");
-  const pendingSendRef   = useRef<boolean>(false);
+  // Keep ref in sync so closures always see the latest convId
+  useEffect(() => { convIdRef.current = currentConvId; }, [currentConvId]);
 
-  // Load initial prompt from navigation state (e.g. sidebar service shortcuts)
+  // Load conversation from Supabase when convId changes
+  useEffect(() => {
+    if (!currentConvId) { setMessages([]); return; }
+    convsDB.get(currentConvId).then(conv => setMessages(conv?.messages ?? []));
+  }, [currentConvId]);
+
+  // Load initial prompt from navigation state
   useEffect(() => {
     const prompt = (location.state as { initialPrompt?: string } | null)?.initialPrompt;
-    if (prompt) {
-      setInput(prompt);
-      // Clear state so back-navigation doesn't re-trigger
-      window.history.replaceState({}, "");
-    }
+    if (prompt) { setInput(prompt); window.history.replaceState({}, ""); }
   }, [location.state]);
 
-  // Contador de segundos mientras carga
+  // Loading counter
   useEffect(() => {
     if (!loading) { setLoadingSeconds(0); return; }
-    const interval = setInterval(() => setLoadingSeconds(s => s + 1), 1000);
-    return () => clearInterval(interval);
+    const t = setInterval(() => setLoadingSeconds(s => s + 1), 1000);
+    return () => clearInterval(t);
   }, [loading]);
 
   // Auto-scroll
@@ -60,111 +66,110 @@ export default function ChatView() {
     ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
   }, [input]);
 
-  const getOrCreateConv = useCallback((): string => {
-    if (currentConvId) return currentConvId;
-    const c = convsDB.create();
-    setCurrentConvId(c.id);
-    return c.id;
-  }, [currentConvId, setCurrentConvId]);
-
   const send = useCallback(async (text?: string) => {
     const content = (text ?? input).trim();
     if (!content || loading) return;
     setInput("");
 
-    const convId = getOrCreateConv();
-    convsDB.addMessage(convId, { role: "user", content });
+    // Get or create conversation
+    let convId = convIdRef.current;
+    if (!convId) {
+      const conv = await convsDB.create();
+      convId = conv.id;
+      convIdRef.current = convId;
+      setCurrentConvId(convId);
+    }
+
+    // Add user message optimistically
+    const userMsg: Message = { id: uid(), role: "user", content, timestamp: now() };
+    const withUser = [...messages, userMsg];
+    setMessages(withUser);
+
+    // Persist (title set on first message)
+    await convsDB.update(convId, {
+      messages: withUser,
+      ...(messages.length === 0 ? { title: content.slice(0, 50) + (content.length > 50 ? "…" : "") } : {}),
+    });
     bump();
     setLoading(true);
 
-    // Build history for API
-    const updated = convsDB.get(convId);
-    const history = (updated?.messages ?? []).map(m => ({ role: m.role, content: m.content, tool: m.tool }));
+    const history = withUser.map(m => ({ role: m.role, content: m.content, tool: m.tool }));
 
     try {
       const res  = await fetch("/api/chat", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ messages: history }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history }),
       });
       const data = await res.json();
-      convsDB.addMessage(convId, {
+
+      const assistantMsg: Message = {
+        id:      uid(),
         role:    "assistant",
         content: data.content ?? "Sin respuesta.",
         tool:    data.tool,
         model:   data.model,
         svg:     data.svg,
-      });
+        timestamp: now(),
+      };
+      const withAssistant = [...withUser, assistantMsg];
+      setMessages(withAssistant);
+      await convsDB.update(convId, { messages: withAssistant });
     } catch {
-      convsDB.addMessage(convId, {
-        role:    "assistant",
-        content: "Error de conexión. Inténtalo de nuevo.",
-        tool:    "chat",
-      });
+      const errMsg: Message = { id: uid(), role: "assistant", content: "Error de conexión. Inténtalo de nuevo.", tool: "chat", timestamp: now() };
+      const withErr = [...withUser, errMsg];
+      setMessages(withErr);
+      await convsDB.update(convId, { messages: withErr });
     } finally {
       setLoading(false);
       bump();
     }
-  }, [input, loading, getOrCreateConv, bump]);
+  }, [input, loading, messages, setCurrentConvId, bump]);
 
-  // Voice — Gemini-style overlay
+  // ── Voice ────────────────────────────────────────────────────────────────────
   const startVoice = () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Safari."); return; }
-
     finalsRef.current = "";
     setListening(true);
 
     const launchRec = () => {
       const rec = new SR();
-      rec.lang           = "es-ES";
-      rec.continuous     = false;
-      rec.interimResults = false;
-
+      rec.lang = "es-ES"; rec.continuous = false; rec.interimResults = false;
       rec.onresult = (e: SpeechRecognitionEvent) => {
         const t = e.results[0][0].transcript.trim();
         if (t) finalsRef.current += (finalsRef.current ? " " : "") + t;
       };
-
       rec.onerror = (e: any) => {
         if (e.error === "not-allowed") { recognitionRef.current = null; setListening(false); }
       };
-
       rec.onend = () => {
-        // User pressed send — wait for this onend so onresult has fired first
         if (pendingSendRef.current) {
           pendingSendRef.current = false;
           const text = finalsRef.current.trim();
           finalsRef.current = "";
           setListening(false);
-                    if (text) send(text);
+          if (text) send(text);
           return;
         }
-        // Still listening — restart with a fresh instance after a short pause
         if (recognitionRef.current !== null) {
-          setTimeout(() => {
-            if (recognitionRef.current !== null) launchRec();
-          }, 350);
+          setTimeout(() => { if (recognitionRef.current !== null) launchRec(); }, 350);
         }
       };
-
       rec.start();
       recognitionRef.current = rec;
     };
-
     launchRec();
   };
 
   const cancelVoice = () => {
     const rec = recognitionRef.current;
-    recognitionRef.current = null; // nullify first so onend doesn't restart
+    recognitionRef.current = null;
     rec?.stop();
     finalsRef.current = "";
     setListening(false);
-      };
+  };
 
   const sendVoice = () => {
-    // If there's already captured text, send immediately
     const existing = finalsRef.current.trim();
     if (existing) {
       const rec = recognitionRef.current;
@@ -172,17 +177,15 @@ export default function ChatView() {
       rec?.stop();
       finalsRef.current = "";
       setListening(false);
-            send(existing);
+      send(existing);
       return;
     }
-    // Otherwise mark pending — onresult+onend will complete and send
     pendingSendRef.current = true;
     const rec = recognitionRef.current;
     recognitionRef.current = null;
     rec?.stop();
   };
 
-  // Download SVG
   const downloadSVG = (svg: string) => {
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const url  = URL.createObjectURL(blob);
@@ -193,7 +196,7 @@ export default function ChatView() {
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
-  const userName = localStorage.getItem("skema_user_name");
+  const userName = profile?.name ?? localStorage.getItem("skema_user_name");
   const greeting = userName ? `${timeGreeting}, ${userName}` : timeGreeting;
 
   return (
@@ -230,15 +233,10 @@ export default function ChatView() {
             <div className="flex gap-3 max-w-2xl">
               <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
               <div className="pt-1">
-                {loadingSeconds < 3 ? (
-                  <TypingDots />
-                ) : loadingSeconds < 10 ? (
-                  <LoadingText text="Buscando información actualizada..." />
-                ) : loadingSeconds < 30 ? (
-                  <LoadingText text="Analizando fuentes..." />
-                ) : (
-                  <LoadingText text="Investigando en profundidad... puede tardar hasta un minuto" />
-                )}
+                {loadingSeconds < 3  ? <TypingDots /> :
+                 loadingSeconds < 10 ? <LoadingText text="Buscando información actualizada..." /> :
+                 loadingSeconds < 30 ? <LoadingText text="Analizando fuentes..." /> :
+                                       <LoadingText text="Investigando en profundidad... puede tardar hasta un minuto" />}
               </div>
             </div>
           )}
@@ -246,39 +244,25 @@ export default function ChatView() {
         </div>
       )}
 
-      {/* Voice overlay — Gemini style */}
+      {/* Voice overlay */}
       {listening && (
         <div className="absolute inset-x-0 bottom-0 z-50 flex flex-col items-center justify-end pb-6 pt-8"
           style={{ background: "linear-gradient(to top, rgba(0,0,0,0.82) 60%, transparent)" }}>
-          {/* Wave bars */}
           <div className="flex items-center gap-1.5 h-14 mb-6">
             {[0,1,2,3,4,5,6].map(i => (
-              <div
-                key={i}
-                className="w-1 rounded-full bg-white"
-                style={{
-                  animation: `voiceWave 0.9s ease-in-out infinite alternate`,
-                  animationDelay: `${i * 0.12}s`,
-                  height: "12px",
-                }}
+              <div key={i} className="w-1 rounded-full bg-white"
+                style={{ animation: "voiceWave 0.9s ease-in-out infinite alternate", animationDelay: `${i * 0.12}s`, height: "12px" }}
               />
             ))}
           </div>
           <p className="text-white/60 text-[13px] mb-6">Escuchando...</p>
-          {/* Buttons */}
           <div className="flex items-center gap-6">
-            <button
-              onClick={cancelVoice}
+            <button onClick={cancelVoice}
               className="w-12 h-12 rounded-full bg-white/15 text-white flex items-center justify-center text-xl hover:bg-white/25 transition-colors"
-              title="Cancelar"
-            >✕</button>
-            <button
-              onClick={sendVoice}
+              title="Cancelar">✕</button>
+            <button onClick={sendVoice}
               className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 hover:opacity-90 transition-opacity shadow-lg"
-              title="Enviar"
-            >
-              <Send size={22} />
-            </button>
+              title="Enviar"><Send size={22} /></button>
           </div>
         </div>
       )}
@@ -287,7 +271,6 @@ export default function ChatView() {
       <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-end gap-2">
-            {/* Pill input */}
             <div className="flex-1 border border-s-border rounded-full bg-s-surface focus-within:border-s-text transition-colors px-5 py-3">
               <textarea
                 ref={textareaRef}
@@ -302,25 +285,14 @@ export default function ChatView() {
                 className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
               />
             </div>
-
-            {/* Circle action button */}
             {input.trim() ? (
-              <button
-                onClick={() => send()}
-                disabled={loading}
+              <button onClick={() => send()} disabled={loading}
                 className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 disabled:opacity-30 transition-opacity"
-                title="Enviar"
-              >
-                <Send size={19} />
-              </button>
+                title="Enviar"><Send size={19} /></button>
             ) : !listening ? (
-              <button
-                onClick={startVoice}
+              <button onClick={startVoice}
                 className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 transition-opacity"
-                title="Hablar"
-              >
-                <Mic size={19} />
-              </button>
+                title="Hablar"><Mic size={19} /></button>
             ) : null}
           </div>
           <p className="text-center text-[11px] text-s-muted mt-2">
@@ -332,7 +304,6 @@ export default function ChatView() {
   );
 }
 
-// ── Message bubble ────────────────────────────────────────────────────────────
 function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDownloadSVG: (svg: string) => void }) {
   if (m.role === "user") {
     return (
@@ -343,22 +314,21 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
       </div>
     );
   }
-
   return (
     <div className="flex gap-3 max-w-2xl">
       <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
         <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-headings:text-s-text prose-strong:text-s-text prose-li:my-0.5">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {(m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim()}
+          </ReactMarkdown>
         </div>
         {m.svg && (
           <div className="border border-s-border rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-s-border bg-s-surface">
               <span className="text-[11px] text-s-muted uppercase tracking-wider">Plano esquemático</span>
-              <button
-                onClick={() => onDownloadSVG(m.svg!)}
-                className="flex items-center gap-1.5 text-[11px] text-s-muted hover:text-s-text transition-colors"
-              >
+              <button onClick={() => onDownloadSVG(m.svg!)}
+                className="flex items-center gap-1.5 text-[11px] text-s-muted hover:text-s-text transition-colors">
                 <Download size={12} /> Descargar SVG
               </button>
             </div>
@@ -373,10 +343,8 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
         )}
         {m.model && (
           <span className="text-[10px] text-s-muted">
-            {m.model.includes("perplexity") ? "Perplexity"
-              : m.model.includes("haiku") ? "Haiku"
-              : "Sonnet"}
-            {m.tool && m.tool !== "chat" ? ` · ${m.tool}` : ""}
+            {m.model.includes("perplexity") ? "Perplexity" : m.model.includes("haiku") ? "Haiku" : "Sonnet"}
+            {m.tool && m.tool !== "chat" && m.tool !== "search" ? ` · ${m.tool}` : ""}
           </span>
         )}
       </div>
@@ -384,25 +352,17 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
   );
 }
 
-// ── Loading text ───────────────────────────────────────────────────────────────
 function LoadingText({ text }: { text: string }) {
-  return (
-    <p className="text-[13px] text-s-muted italic animate-pulse">{text}</p>
-  );
+  return <p className="text-[13px] text-s-muted italic animate-pulse">{text}</p>;
 }
 
-// ── Typing dots ────────────────────────────────────────────────────────────────
 function TypingDots() {
   return (
     <div className="flex gap-1 items-center h-6">
       {[0, 1, 2].map(i => (
-        <span
-          key={i}
-          className="w-1.5 h-1.5 rounded-full bg-s-muted animate-bounce"
-          style={{ animationDelay: `${i * 0.15}s`, animationDuration: "0.8s" }}
-        />
+        <span key={i} className="w-1.5 h-1.5 rounded-full bg-s-muted animate-bounce"
+          style={{ animationDelay: `${i * 0.15}s`, animationDuration: "0.8s" }} />
       ))}
     </div>
   );
 }
-
