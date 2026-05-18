@@ -67,9 +67,13 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
 
   const createProject = async () => {
     if (!newName.trim()) return;
-    await projectsDB.create(newName.trim());
-    setNewName(""); setNewProj(false);
-    projectsDB.getAll().then(setAllProjects);
+    try {
+      await projectsDB.create(newName.trim());
+      setNewName(""); setNewProj(false);
+      projectsDB.getAll().then(setAllProjects);
+    } catch (e) {
+      alert("Error al crear proyecto: " + (e as Error).message);
+    }
   };
 
   const deleteProject = async (e: React.MouseEvent, id: string) => {

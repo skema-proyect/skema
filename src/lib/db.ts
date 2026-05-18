@@ -4,6 +4,11 @@ import type { Project, Conversation, Message, Note, CalendarEvent } from "@/type
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 
+const getUid = async (): Promise<string | null> => {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user?.id ?? null;
+};
+
 // ── Projects ──────────────────────────────────────────────────────────────────
 export const projects = {
   getAll: async (): Promise<Project[]> => {
@@ -16,8 +21,10 @@ export const projects = {
   },
 
   create: async (name: string): Promise<Project> => {
-    const { data } = await supabase
-      .from("projects").insert({ name }).select().single();
+    const user_id = await getUid();
+    const { data, error } = await supabase
+      .from("projects").insert({ name, user_id }).select().single();
+    if (error) throw new Error(error.message);
     return { id: data.id, name: data.name, createdAt: data.created_at };
   },
 
@@ -60,10 +67,12 @@ export const conversations = {
   },
 
   create: async (title = "Nueva conversación", projectId?: string | null): Promise<Conversation> => {
-    const { data } = await supabase
+    const user_id = await getUid();
+    const { data, error } = await supabase
       .from("conversations")
-      .insert({ title, project_id: projectId ?? null })
+      .insert({ title, project_id: projectId ?? null, user_id })
       .select().single();
+    if (error) throw new Error(error.message);
     return mapConv(data);
   },
 
@@ -105,8 +114,10 @@ export const notes = {
   },
 
   create: async (): Promise<Note> => {
-    const { data } = await supabase
-      .from("notes").insert({ title: "Sin título", content: "" }).select().single();
+    const user_id = await getUid();
+    const { data, error } = await supabase
+      .from("notes").insert({ title: "Sin título", content: "", user_id }).select().single();
+    if (error) throw new Error(error.message);
     return mapNote(data);
   },
 
@@ -146,14 +157,17 @@ export const events = {
   },
 
   create: async (ev: Omit<CalendarEvent, "id">): Promise<CalendarEvent> => {
-    const { data } = await supabase.from("events").insert({
+    const user_id = await getUid();
+    const { data, error } = await supabase.from("events").insert({
       title: ev.title, date: ev.date,
       start_time:  ev.startTime  ?? null,
       end_time:    ev.endTime    ?? null,
       description: ev.description ?? null,
       color:       ev.color ?? "#000000",
       project_id:  ev.projectId ?? null,
+      user_id,
     }).select().single();
+    if (error) throw new Error(error.message);
     return mapEvent(data);
   },
 
