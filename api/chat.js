@@ -394,15 +394,15 @@ function detectIntent(message) {
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
 
-  // Normalizar acentos para matching robusto (agéndame → agendame, añadir → anadir...)
+  // Normalizar acentos — ̀-ͯ cubre todos los diacríticos combinados
   const n = message.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
   if (
-    /\bagend(a|ar|ame|arlo|arla|arme)\b/.test(n) ||
-    /\b(anota|apunta|pon|anade|anadir|crea|mete|guarda)\b.{0,30}\b(agenda|calendario)\b/.test(n) ||
-    /\b(agenda|calendario)\b/.test(n) ||
-    /\b(recordatorio|recuerdame|ponme.{0,15}cita|programa.{0,20}reuni|reserva.{0,15}cita)\b/.test(n) ||
-    /\b(reunion|cita|llamada|visita|evento)\b.{0,60}\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo|\d{1,2}[:/h])\b/.test(n) ||
+    /\bagend\w+/.test(n) ||                                                                          // agend* — agendar, agéndame, agendes, agendemos...
+    /\b(agenda|calendario)\b/.test(n) ||                                                             // palabra exacta
+    /\b(anota|apunta|pon|mete|guarda|anade|anadir)\b.{0,40}\b(agenda|calendario)\b/.test(n) ||      // verbo + agenda
+    /\b(recordatorio|recuerdame|ponme.{0,20}(cita|reunion)|programa.{0,25}(reuni|cita)|reserva.{0,20}cita)\b/.test(n) ||
+    /\b(reunion|cita|llamada|visita|evento)\b.{0,60}\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo|\d{1,2})\b/.test(n) ||
     /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reunion|cita|llamada|visita|evento)\b/.test(n)
   )
     return "agenda";
@@ -444,6 +444,7 @@ export default async function handler(req, res) {
   const isSketchConversation = messages.some(m => m.tool === "sketch");
   const intent = isSketchConversation ? "sketch" : detectIntent(lastUser.content);
   const history = messages.map(m => ({ role: m.role, content: m.content }));
+  const _debug = { intent, msg: lastUser.content.slice(0, 60) };
 
   try {
     // ── Agenda — extraer evento y confirmar ──────────────────────────────────────
@@ -478,6 +479,7 @@ Si no hay suficiente información para crear el evento, devuelve:
           content:   parsed.message ?? `Evento "${parsed.title}" añadido a tu agenda.`,
           tool:      "agenda",
           model:     MODELS.fast,
+          _debug,
           eventData: {
             title:       parsed.title,
             date:        parsed.date,
@@ -490,10 +492,12 @@ Si no hay suficiente información para crear el evento, devuelve:
       }
       // No pudo extraer — pedir aclaración directamente, sin pasar por Claude
       const reason = parsed?.error ?? "no pude interpretar el evento";
+      const rawText = extraction.content[0]?.text ?? "";
       return res.json({
         content: `Para añadirlo a la agenda necesito un poco más de detalle: ${reason}. ¿Puedes indicarme el título, la fecha y la hora?`,
         tool: "agenda",
         model: MODELS.fast,
+        _debug: { ..._debug, parsed, rawText },
       });
     }
 
@@ -634,7 +638,7 @@ INSTRUCCIÓN CRÍTICA para cambios:
       model, max_tokens: 1500,
       system: SYSTEM + projectContext + agendaHistoryNote, messages: history,
     });
-    return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model });
+    return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model, _debug });
 
   } catch (e) {
     return res.status(500).json({ error: e.message });
