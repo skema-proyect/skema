@@ -38,7 +38,10 @@ Formato de respuesta:
 - Usa listas con guión solo cuando son genuinamente listas (más de 3 ítems sin conexión narrativa entre ellos); si son 2-3 puntos, intégralos en el texto
 - Usa negritas con moderación, solo para términos clave, no para decorar
 - Sin puntos suspensivos al final de frases, sin rellenos de transición vacíos
-- Las respuestas deben tener la longitud justa: ni telegráficas ni exhaustivas`;
+- Las respuestas deben tener la longitud justa: ni telegráficas ni exhaustivas
+
+Capacidades integradas:
+- Puedes crear eventos en la agenda del usuario: si te piden agendar algo, hazlo directamente sin decir que no tienes acceso. El sistema lo gestiona automáticamente.`;
 
 const NORMATIVA_SYSTEM = `${SYSTEM}
 
@@ -391,9 +394,9 @@ function detectIntent(message) {
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
 
-  if (/\b(agéndame|agendame|añade.*agenda|apunta.*agenda|crea.*evento|pon.*agenda|programa.*reuni|reserva.*cita|recuérdame|recordatorio)\b/i.test(message) ||
-      /\b(tengo|hay|tenemos)\b.{0,30}\b(reuni[oó]n|cita|llamada|visita|evento)\b/i.test(message) ||
-      /\b(reuni[oó]n|cita|llamada|visita)\b.{0,30}\b(el|la|este|mañana|hoy|lunes|martes|miércoles|jueves|viernes|sábado|domingo)\b/i.test(message))
+  if (/\b(agend(a|ar|ame|arlo|arla|arme)|añade.*agenda|apunta.*agenda|pon.*agenda|crea.*evento|programa.*reuni|reserva.*cita|recuérdame|recordatorio|ponme.*cita|anota.*agenda)\b/i.test(message) ||
+      /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reuni[oó]n|cita|llamada|visita|evento)\b/i.test(message) ||
+      /\b(reuni[oó]n|cita|llamada|visita|evento)\b.{0,40}\b(el|la|este|mañana|hoy|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d{1,2})\b/i.test(message))
     return "agenda";
 
   return "chat";
