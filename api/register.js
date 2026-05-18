@@ -37,7 +37,10 @@ export default async function handler(req, res) {
     .single();
 
   if (inviteErr || !invite) {
-    return res.status(400).json({ error: "Código de acceso inválido o ya utilizado" });
+    return res.status(400).json({
+      error: "Código de acceso inválido o ya utilizado",
+      _debug: { code: normalizedCode, supabaseError: inviteErr?.message ?? null, invite: invite ?? null }
+    });
   }
 
   // Crear usuario
