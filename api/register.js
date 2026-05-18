@@ -36,7 +36,17 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (inviteErr || !invite) {
-    return res.status(400).json({ error: "Código de acceso inválido" });
+    return res.status(400).json({
+      error: "Código de acceso inválido",
+      _debug: {
+        code: normalizedCode,
+        supabaseError: inviteErr?.message ?? null,
+        invite,
+        hasUrl: !!process.env.SUPABASE_URL,
+        hasViteUrl: !!process.env.VITE_SUPABASE_URL,
+        hasAnonKey: !!(process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY),
+      }
+    });
   }
   if (invite.used === true) {
     return res.status(400).json({ error: "Este código ya fue utilizado" });
