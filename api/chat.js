@@ -394,9 +394,17 @@ function detectIntent(message) {
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
 
-  if (/\b(agend(a|ar|ame|arlo|arla|arme)|añade.*agenda|apunta.*agenda|pon.*agenda|crea.*evento|programa.*reuni|reserva.*cita|recuérdame|recordatorio|ponme.*cita|anota.*agenda)\b/i.test(message) ||
-      /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reuni[oó]n|cita|llamada|visita|evento)\b/i.test(message) ||
-      /\b(reuni[oó]n|cita|llamada|visita|evento)\b.{0,40}\b(el|la|este|mañana|hoy|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d{1,2})\b/i.test(message))
+  // Normalizar acentos para matching robusto (agéndame → agendame, añadir → anadir...)
+  const n = message.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+  if (
+    /\bagend(a|ar|ame|arlo|arla|arme)\b/.test(n) ||
+    /\b(anota|apunta|pon|anade|anadir|crea|mete|guarda)\b.{0,30}\b(agenda|calendario)\b/.test(n) ||
+    /\b(agenda|calendario)\b/.test(n) ||
+    /\b(recordatorio|recuerdame|ponme.{0,15}cita|programa.{0,20}reuni|reserva.{0,15}cita)\b/.test(n) ||
+    /\b(reunion|cita|llamada|visita|evento)\b.{0,60}\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo|\d{1,2}[:/h])\b/.test(n) ||
+    /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reunion|cita|llamada|visita|evento)\b/.test(n)
+  )
     return "agenda";
 
   return "chat";
@@ -421,6 +429,12 @@ export default async function handler(req, res) {
 
   const projectContext = projectInstructions?.trim()
     ? `\n\nCONTEXTO DEL PROYECTO:\n${projectInstructions.trim()}`
+    : "";
+
+  // Si en la conversación ya se crearon eventos, informar a Claude para que no se contradiga
+  const hasAgendaHistory = messages.some(m => m.role === "assistant" && m.tool === "agenda");
+  const agendaHistoryNote = hasAgendaHistory
+    ? "\n\nNOTA DE SISTEMA: En esta conversación ya has creado eventos en la agenda del usuario mediante el sistema integrado. Si el usuario pregunta si funcionó o cuestiona tu capacidad, confirma que sí — los eventos están guardados."
     : "";
 
   const lastUser = [...messages].reverse().find(m => m.role === "user");
@@ -618,7 +632,7 @@ INSTRUCCIÓN CRÍTICA para cambios:
     const model = selectModel(lastUser.content);
     const msg   = await client.messages.create({
       model, max_tokens: 1500,
-      system: SYSTEM + projectContext, messages: history,
+      system: SYSTEM + projectContext + agendaHistoryNote, messages: history,
     });
     return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model });
 
