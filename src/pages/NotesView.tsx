@@ -1,20 +1,19 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Search } from "lucide-react";
+import { Plus, Search, ArrowLeft, Trash2 } from "lucide-react";
 import { notes as notesDB } from "@/lib/db";
 import type { Note } from "@/types";
 
 export default function NotesView() {
-  const [allNotes, setAllNotes] = useState<Note[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [search,   setSearch]   = useState("");
+  const [allNotes,  setAllNotes]  = useState<Note[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [search,    setSearch]    = useState("");
   const titleRef   = useRef<HTMLInputElement>(null);
-  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const reload = async () => setAllNotes(await notesDB.getAll());
-
   useEffect(() => { reload(); }, []);
 
-  const active   = allNotes.find(n => n.id === activeId) ?? null;
+  const editing = allNotes.find(n => n.id === editingId) ?? null;
   const filtered = allNotes.filter(n =>
     n.title.toLowerCase().includes(search.toLowerCase()) ||
     n.content.toLowerCase().includes(search.toLowerCase())
@@ -23,121 +22,140 @@ export default function NotesView() {
   const createNote = async () => {
     const n = await notesDB.create();
     await reload();
-    setActiveId(n.id);
-    setTimeout(() => titleRef.current?.focus(), 50);
+    setEditingId(n.id);
+    setTimeout(() => titleRef.current?.focus(), 80);
   };
 
-  const deleteNote = async (id: string) => {
+  const openNote = (id: string) => {
+    setEditingId(id);
+    setSearch("");
+  };
+
+  const goBack = () => { setEditingId(null); reload(); };
+
+  const debouncedSave = (updates: Partial<Pick<Note, "title" | "content">>) => {
+    if (!editingId) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      notesDB.update(editingId, updates).then(reload);
+    }, 500);
+  };
+
+  const deleteNote = async (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!confirm("¿Eliminar esta nota?")) return;
     await notesDB.delete(id);
-    if (activeId === id) setActiveId(null);
+    if (editingId === id) setEditingId(null);
     await reload();
   };
 
-  const updateTitle = async (val: string) => {
-    if (!activeId) return;
-    await notesDB.update(activeId, { title: val || "Sin título" });
-    await reload();
+  const fmt = (iso: string) => {
+    const d    = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    if (diff < 86_400_000)     return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    if (diff < 86_400_000 * 7) return d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+    return d.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
   };
 
-  const updateContent = async (val: string) => {
-    if (!activeId) return;
-    await notesDB.update(activeId, { content: val });
-    await reload();
-  };
-
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
-
-  return (
-    <div className="flex h-full bg-s-bg overflow-hidden">
-
-      {/* Left panel */}
-      <div className="w-72 flex-shrink-0 border-r border-s-border flex flex-col">
-        <div className="px-4 py-4 border-b border-s-border">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-s-text font-medium text-[14px]">Notas</h2>
-            <button onClick={createNote}
-              className="p-1.5 rounded-lg hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"
-              title="Nueva nota">
-              <Plus size={16} />
+  // ── Editor ───────────────────────────────────────────────────────────────────
+  if (editing) {
+    return (
+      <div className="flex flex-col h-full bg-s-bg">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-s-border flex-shrink-0">
+          <button onClick={goBack}
+            className="flex items-center gap-1.5 text-s-muted hover:text-s-text transition-colors">
+            <ArrowLeft size={17} />
+            <span className="text-[14px]">Notas</span>
+          </button>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-s-muted">{fmt(editing.updatedAt)}</span>
+            <button onClick={() => deleteNote(editing.id)}
+              className="ml-3 p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-danger transition-colors">
+              <Trash2 size={15} />
             </button>
-          </div>
-          <div className="flex items-center gap-2 bg-s-surface border border-s-border rounded-lg px-3 py-1.5">
-            <Search size={13} className="text-s-muted flex-shrink-0" />
-            <input
-              value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar notas..."
-              className="flex-1 bg-transparent text-[12px] text-s-text placeholder:text-s-muted outline-none"
-            />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {filtered.length === 0 && (
-            <div className="px-4 py-8 text-center">
-              <p className="text-s-muted text-[12px]">
-                {search ? "Sin resultados" : "Sin notas. Crea una."}
-              </p>
-            </div>
-          )}
-          {filtered.map(n => (
-            <div key={n.id} onClick={() => setActiveId(n.id)}
-              className={`px-4 py-3 border-b border-s-border cursor-pointer group transition-colors ${activeId === n.id ? "bg-s-surface" : "hover:bg-s-surface/50"}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-medium text-s-text truncate">{n.title}</p>
-                  <p className="text-[11px] text-s-muted mt-0.5 line-clamp-2 leading-relaxed">
-                    {n.content || "Sin contenido"}
-                  </p>
-                  <p className="text-[10px] text-s-muted mt-1">{fmt(n.updatedAt)}</p>
-                </div>
-                <button onClick={e => { e.stopPropagation(); deleteNote(n.id); }}
-                  className="hidden group-hover:flex p-1 rounded hover:bg-s-border text-s-muted hover:text-s-danger mt-0.5 flex-shrink-0">
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </div>
-          ))}
+        {/* Title */}
+        <input
+          ref={titleRef}
+          key={editing.id + "-title"}
+          defaultValue={editing.title === "Sin título" ? "" : editing.title}
+          onChange={e => debouncedSave({ title: e.target.value || "Sin título" })}
+          placeholder="Título"
+          className="px-6 pt-5 pb-2 text-[22px] font-semibold text-s-text bg-transparent outline-none placeholder:text-s-muted flex-shrink-0"
+        />
+
+        {/* Content */}
+        <textarea
+          key={editing.id + "-content"}
+          defaultValue={editing.content}
+          onChange={e => debouncedSave({ content: e.target.value })}
+          placeholder="Empieza a escribir..."
+          className="flex-1 px-6 py-2 text-[15px] text-s-text bg-transparent outline-none resize-none leading-relaxed placeholder:text-s-muted"
+        />
+      </div>
+    );
+  }
+
+  // ── Grid ─────────────────────────────────────────────────────────────────────
+  return (
+    <div className="flex flex-col h-full bg-s-bg overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-s-border flex-shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-[18px] font-semibold text-s-text">Notas</h1>
+          <button onClick={createNote}
+            className="w-8 h-8 rounded-full bg-s-text text-s-bg flex items-center justify-center hover:opacity-80 transition-opacity"
+            title="Nueva nota">
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="flex items-center gap-2 bg-s-surface border border-s-border rounded-xl px-3 py-2">
+          <Search size={14} className="text-s-muted flex-shrink-0" />
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar notas..."
+            className="flex-1 bg-transparent text-[14px] text-s-text placeholder:text-s-muted outline-none"
+          />
         </div>
       </div>
 
-      {/* Right panel — editor */}
-      {active ? (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-8 py-4 border-b border-s-border flex items-center justify-between">
-            <input
-              ref={titleRef}
-              key={active.id + "-title"}
-              defaultValue={active.title === "Sin título" ? "" : active.title}
-              onChange={e => updateTitle(e.target.value)}
-              placeholder="Título"
-              className="text-[18px] font-medium text-s-text bg-transparent outline-none flex-1 placeholder:text-s-muted"
-            />
-            <span className="text-[11px] text-s-muted ml-4 flex-shrink-0">
-              Editado {fmt(active.updatedAt)}
-            </span>
+      {/* Grid */}
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        {filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full pb-16">
+            <p className="text-s-muted text-[14px] mb-4">
+              {search ? "Sin resultados" : "Aún no tienes notas"}
+            </p>
+            {!search && (
+              <button onClick={createNote}
+                className="flex items-center gap-2 px-4 py-2 border border-s-border rounded-xl text-[13px] text-s-muted hover:text-s-text hover:border-s-text transition-colors">
+                <Plus size={14} /> Nueva nota
+              </button>
+            )}
           </div>
-          <textarea
-            ref={contentRef}
-            key={active.id + "-content"}
-            defaultValue={active.content}
-            onChange={e => updateContent(e.target.value)}
-            placeholder="Empieza a escribir..."
-            className="flex-1 px-8 py-5 text-[14px] text-s-text bg-transparent outline-none resize-none leading-relaxed placeholder:text-s-muted"
-          />
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-center px-8">
-          <div>
-            <p className="text-s-muted text-[14px] mb-3">Selecciona una nota o crea una nueva</p>
-            <button onClick={createNote}
-              className="inline-flex items-center gap-2 px-4 py-2 border border-s-border rounded-lg text-[13px] text-s-muted hover:text-s-text hover:border-s-text transition-colors">
-              <Plus size={14} /> Nueva nota
-            </button>
+        ) : (
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            {filtered.map(n => (
+              <div key={n.id} onClick={() => openNote(n.id)}
+                className="relative bg-s-surface border border-s-border rounded-2xl p-4 cursor-pointer hover:border-s-text transition-colors group min-h-[120px] flex flex-col">
+                <p className="text-[14px] font-semibold text-s-text mb-1.5 line-clamp-1">{n.title}</p>
+                <p className="text-[12px] text-s-muted leading-relaxed flex-1 line-clamp-4">
+                  {n.content || "Sin contenido"}
+                </p>
+                <p className="text-[11px] text-s-muted mt-3">{fmt(n.updatedAt)}</p>
+                <button
+                  onClick={e => deleteNote(n.id, e)}
+                  className="absolute top-3 right-3 hidden group-hover:flex p-1 rounded-lg hover:bg-s-border text-s-muted hover:text-s-danger transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
