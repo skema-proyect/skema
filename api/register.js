@@ -19,29 +19,19 @@ export default async function handler(req, res) {
 
   const normalizedCode = code.trim().toUpperCase();
 
-  // Validar código de acceso via fetch directo (bypass JS client)
-  const sbUrl = process.env.SUPABASE_URL?.trimEnd().replace(/\/$/, "");
-  const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const headers = { apikey: sbKey, Authorization: `Bearer ${sbKey}` };
+  // Validar código de acceso
+  const { data: invite, error: inviteErr } = await adminClient
+    .from("invite_codes")
+    .select("id, used")
+    .eq("code", normalizedCode)
+    .maybeSingle();
 
-  // Test 1: tabla sin filtros
-  let test1 = null;
-  try {
-    const r = await fetch(`${sbUrl}/rest/v1/invite_codes?select=id&limit=1`, { headers });
-    test1 = { status: r.status, body: await r.text() };
-  } catch (e) { test1 = { err: e.message }; }
-
-  // Test 2: con filtro de código
-  let test2 = null;
-  try {
-    const r = await fetch(`${sbUrl}/rest/v1/invite_codes?select=id,used&code=eq.${encodeURIComponent(normalizedCode)}&limit=1`, { headers });
-    test2 = { status: r.status, body: await r.text() };
-  } catch (e) { test2 = { err: e.message }; }
-
-  return res.status(400).json({
-    error: "DEBUG",
-    _debug: { url: sbUrl, test1, test2 }
-  });
+  if (!invite) {
+    return res.status(400).json({ error: "Código de acceso inválido" });
+  }
+  if (invite.used === true) {
+    return res.status(400).json({ error: "Este código ya fue utilizado" });
+  }
 
   // Crear usuario
   const { data: userData, error: userErr } = await adminClient.auth.admin.createUser({
