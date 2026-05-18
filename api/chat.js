@@ -40,8 +40,8 @@ Formato de respuesta:
 - Sin puntos suspensivos al final de frases, sin rellenos de transición vacíos
 - Las respuestas deben tener la longitud justa: ni telegráficas ni exhaustivas
 
-Capacidades integradas:
-- Puedes crear eventos en la agenda del usuario: si te piden agendar algo, hazlo directamente sin decir que no tienes acceso. El sistema lo gestiona automáticamente.`;
+Capacidades integradas — IMPORTANTE:
+- Tienes acceso real a la agenda del usuario. Cuando te pidan agendar algo, responde confirmando que lo has añadido. NUNCA digas "no tengo acceso a tu agenda", "no puedo crear eventos" ni nada parecido — eso es falso. El sistema lo gestiona automáticamente en segundo plano.`;
 
 const NORMATIVA_SYSTEM = `${SYSTEM}
 
