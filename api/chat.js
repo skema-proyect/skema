@@ -391,6 +391,11 @@ function detectIntent(message) {
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
 
+  if (/\b(agéndame|agendame|añade.*agenda|apunta.*agenda|crea.*evento|pon.*agenda|programa.*reuni|reserva.*cita|recuérdame|recordatorio)\b/i.test(message) ||
+      /\b(tengo|hay|tenemos)\b.{0,30}\b(reuni[oó]n|cita|llamada|visita|evento)\b/i.test(message) ||
+      /\b(reuni[oó]n|cita|llamada|visita)\b.{0,30}\b(el|la|este|mañana|hoy|lunes|martes|miércoles|jueves|viernes|sábado|domingo)\b/i.test(message))
+    return "agenda";
+
   return "chat";
 }
 
@@ -408,7 +413,7 @@ function selectModel(message) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [], projectInstructions } = req.body;
+  const { messages = [], projectInstructions, today } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
 
   const projectContext = projectInstructions?.trim()
@@ -424,6 +429,51 @@ export default async function handler(req, res) {
   const history = messages.map(m => ({ role: m.role, content: m.content }));
 
   try {
+    // ── Agenda — extraer evento y confirmar ──────────────────────────────────────
+    if (intent === "agenda") {
+      const todayStr = today ?? new Date().toISOString().split("T")[0];
+      const extraction = await client.messages.create({
+        model: MODELS.fast,
+        max_tokens: 400,
+        system: `Eres un asistente que extrae eventos de calendario de mensajes en español.
+Hoy es ${todayStr}. Resuelve fechas relativas (mañana, el martes, la próxima semana...) a fechas absolutas.
+
+Devuelve ÚNICAMENTE un JSON válido con este formato (sin texto extra):
+{
+  "title": "título conciso del evento",
+  "date": "YYYY-MM-DD",
+  "start_time": "HH:MM o null",
+  "end_time": "HH:MM o null",
+  "description": "descripción breve o null",
+  "message": "confirmación natural en una frase, ej: Apuntado. Reunión con el cliente el martes 20 a las 10:00."
+}
+
+Si no hay suficiente información para crear el evento, devuelve:
+{ "error": "motivo breve" }`,
+        messages: [{ role: "user", content: lastUser.content }],
+      });
+
+      let parsed = null;
+      try { parsed = JSON.parse(extraction.content[0].text.trim()); } catch {}
+
+      if (parsed && !parsed.error && parsed.title && parsed.date) {
+        return res.json({
+          content:   parsed.message ?? `Evento "${parsed.title}" añadido a tu agenda.`,
+          tool:      "agenda",
+          model:     MODELS.fast,
+          eventData: {
+            title:       parsed.title,
+            date:        parsed.date,
+            startTime:   parsed.start_time ?? undefined,
+            endTime:     parsed.end_time   ?? undefined,
+            description: parsed.description ?? undefined,
+            color:       "#000000",
+          },
+        });
+      }
+      // Si no pudo extraer, cae al chat normal
+    }
+
     // ── Sketch (architect → JSON → JS renders SVG) ──
     if (intent === "sketch") {
       // Extract the LATEST spec from history (ignore older ones)

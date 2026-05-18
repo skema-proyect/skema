@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Download } from "lucide-react";
+import { Send, Mic, Download, CalendarCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { conversations as convsDB, projects as projectsDB, uid, now } from "@/lib/db";
+import { conversations as convsDB, projects as projectsDB, events as eventsDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
 import type { Message } from "@/types";
@@ -108,7 +108,11 @@ export default function ChatView() {
     try {
       const res  = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, projectInstructions: projectInstructions ?? undefined }),
+        body: JSON.stringify({
+          messages: history,
+          projectInstructions: projectInstructions ?? undefined,
+          today: new Date().toISOString().split("T")[0],
+        }),
       });
       const data = await res.json();
 
@@ -124,6 +128,10 @@ export default function ChatView() {
       const withAssistant = [...withUser, assistantMsg];
       setMessages(withAssistant);
       await convsDB.update(convId, { messages: withAssistant });
+
+      if (data.eventData) {
+        try { await eventsDB.create(data.eventData); } catch {}
+      }
     } catch {
       const errMsg: Message = { id: uid(), role: "assistant", content: "Error de conexión. Inténtalo de nuevo.", tool: "chat", timestamp: now() };
       const withErr = [...withUser, errMsg];
@@ -333,6 +341,11 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
             {(m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim()}
           </ReactMarkdown>
         </div>
+        {m.tool === "agenda" && (
+          <div className="flex items-center gap-1.5 text-[12px] text-s-muted">
+            <CalendarCheck size={13} /> Añadido a la agenda
+          </div>
+        )}
         {m.svg && (
           <div className="border border-s-border rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-s-border bg-s-surface">
