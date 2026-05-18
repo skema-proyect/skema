@@ -474,7 +474,13 @@ Si no hay suficiente información para crear el evento, devuelve:
           },
         });
       }
-      // Si no pudo extraer, cae al chat normal
+      // No pudo extraer — pedir aclaración directamente, sin pasar por Claude
+      const reason = parsed?.error ?? "no pude interpretar el evento";
+      return res.json({
+        content: `Para añadirlo a la agenda necesito un poco más de detalle: ${reason}. ¿Puedes indicarme el título, la fecha y la hora?`,
+        tool: "agenda",
+        model: MODELS.fast,
+      });
     }
 
     // ── Sketch (architect → JSON → JS renders SVG) ──
