@@ -28,19 +28,18 @@ export default async function handler(req, res) {
 
   const normalizedCode = code.trim().toUpperCase();
 
-  // Validar código de acceso (used puede ser false o null en filas creadas manualmente)
+  // Validar código de acceso
   const { data: invite, error: inviteErr } = await anonClient
     .from("invite_codes")
     .select("id, used")
     .eq("code", normalizedCode)
-    .or("used.eq.false,used.is.null")
-    .single();
+    .maybeSingle();
 
   if (inviteErr || !invite) {
-    return res.status(400).json({
-      error: "Código de acceso inválido o ya utilizado",
-      _debug: { code: normalizedCode, supabaseError: inviteErr?.message ?? null, invite: invite ?? null }
-    });
+    return res.status(400).json({ error: "Código de acceso inválido" });
+  }
+  if (invite.used === true) {
+    return res.status(400).json({ error: "Este código ya fue utilizado" });
   }
 
   // Crear usuario
