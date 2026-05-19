@@ -388,27 +388,81 @@ function normCatastro(s) {
   return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 }
 
-// Extrae componentes de dirección del mensaje usando Haiku
-async function extractAddress(message) {
-  const msg = await client.messages.create({
-    model: MODELS.fast, max_tokens: 200,
-    system: `Extrae los componentes de la dirección del mensaje en España/Canarias.
-Devuelve SOLO JSON válido (sin texto extra):
-{
-  "tiene_direccion": true,
-  "provincia": "LAS PALMAS" o "SANTA CRUZ DE TENERIFE",
-  "municipio": "nombre del municipio",
-  "tipo_via": "CL" (calle) / "AV" (avenida) / "PZ" (plaza) / "CM" (camino) / "CR" (carretera) / "UR" (urbanización),
-  "nombre_via": "nombre de la vía sin el tipo",
-  "numero": "número de portal o null"
+// Municipios de Gran Canaria para reconocimiento por nombre
+const GC_MUNICIPIOS = [
+  "santa lucia de tirajana", "las palmas de gran canaria", "telde", "ingenio",
+  "mogan", "agaete", "arucas", "galdar", "guia", "firgas", "teror", "valsequillo",
+  "san bartolome de tirajana", "aguimes", "santa brigida", "vega de san mateo",
+  "tejeda", "artenara", "la aldea de san nicolas", "tias", "yaiza", "arrecife",
+];
+const TF_MUNICIPIOS = [
+  "santa cruz de tenerife", "la laguna", "la orotava", "los realejos",
+  "adeje", "arona", "guimar", "icod", "garachico", "buenavista",
+];
+
+// Extrae dirección mediante regex — sin dependencia de LLM para el caso común
+function extractAddressRegex(message) {
+  const norm = message.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+  const TIPOS = {
+    calle:"CL","c/":"CL",cl:"CL",avenida:"AV",avda:"AV","av.":"AV",
+    plaza:"PZ",camino:"CM",carretera:"CR",ctra:"CR",paseo:"PS",
+    urbanizacion:"UR","urb.":"UR",urb:"UR",pasaje:"PJ",vereda:"VR",
+  };
+
+  // tipo_via + nombre + [,] + [numero|nº] + dígitos
+  const viaRe = /\b(calle|avenida|avda?\.?|c\/|cl\b|plaza|camino|carretera|ctra\.?|paseo|urbanizacion|urb\.?|pasaje|vereda)\s+([a-z][a-z\s\-]{0,35}?)\s*(?:,\s*)?(?:(?:numero|num\.?|n[°º]|no\.?)\s*)?(\d+)/;
+  const vm = norm.match(viaRe);
+  if (!vm) return null;
+
+  const tipoKey = vm[1].replace(/\.$/, "");
+  const tipo    = TIPOS[tipoKey] || "CL";
+  const nombre  = vm[2].trim();
+  const numero  = vm[3];
+  if (!nombre || nombre.length < 2) return null;
+
+  // Municipio: "ayuntamiento de X" o "municipio de X"
+  let municipio = norm.match(/(?:ayuntamiento|municipio|termino\s+municipal)\s+de\s+([a-z][a-z\s]{2,40}?)(?:\s*[,.]|$)/)?.[1]?.trim() ?? null;
+
+  // Fallback: buscar nombre de municipio conocido en el texto
+  if (!municipio) {
+    for (const m of [...GC_MUNICIPIOS, ...TF_MUNICIPIOS]) {
+      if (norm.includes(m)) { municipio = m; break; }
+    }
+  }
+
+  if (!municipio) return null;
+
+  const isTF = TF_MUNICIPIOS.some(m => norm.includes(m));
+  return {
+    tiene_direccion: true,
+    provincia: isTF ? "SANTA CRUZ DE TENERIFE" : "LAS PALMAS",
+    municipio,
+    tipo_via: tipo,
+    nombre_via: nombre,
+    numero: numero ?? null,
+    _source: "regex",
+  };
 }
-Si no hay dirección concreta con vía y municipio, devuelve { "tiene_direccion": false }.`,
+
+// Extrae componentes de dirección — regex primero, Haiku como fallback
+async function extractAddress(message) {
+  const fast = extractAddressRegex(message);
+  if (fast) return fast;
+
+  // Haiku solo si el regex no encontró nada
+  const msg = await client.messages.create({
+    model: MODELS.fast, max_tokens: 120,
+    system: `Reply ONLY with a JSON object, no other text.
+If there is a street address: {"tiene_direccion":true,"provincia":"LAS PALMAS","municipio":"SANTA LUCIA DE TIRAJANA","tipo_via":"CL","nombre_via":"TERUEL","numero":"11"}
+Otherwise: {"tiene_direccion":false}`,
     messages: [{ role: "user", content: message }],
   });
   try {
-    const raw = msg.content[0].text.trim()
-      .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    return JSON.parse(raw);
+    const text  = msg.content[0].text.trim();
+    const start = text.indexOf("{");
+    if (start === -1) return { tiene_direccion: false };
+    return JSON.parse(text.slice(start));
   } catch { return { tiene_direccion: false }; }
 }
 
