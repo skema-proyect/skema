@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Trash2, Bell, BellOff } from "lucide-react";
 import { events as eventsDB } from "@/lib/db";
-import { subscribeToPush, isPushEnabled } from "@/lib/push";
+import { subscribeToPush, isPushEnabled, unsubscribeFromPush } from "@/lib/push";
 import type { CalendarEvent } from "@/types";
 
 type View = "dia" | "semana" | "mes" | "año";
@@ -91,10 +91,23 @@ export default function AgendaView() {
             </button>
           ))}
           <button
-            onClick={async () => { const ok = await subscribeToPush(); if (ok) setPushEnabled(true); }}
-            title={pushEnabled ? "Notificaciones activas" : "Activar notificaciones"}
-            className={`p-1.5 rounded transition-colors ml-1 ${pushEnabled ? "text-s-accent" : "text-s-muted hover:text-s-text"}`}>
-            {pushEnabled ? <Bell size={15} /> : <BellOff size={15} />}
+            onClick={async () => {
+              if (pushEnabled) {
+                await unsubscribeFromPush();
+                setPushEnabled(false);
+              } else {
+                const ok = await subscribeToPush();
+                if (ok) setPushEnabled(true);
+              }
+            }}
+            title={pushEnabled ? "Desactivar recordatorios" : "Activar recordatorios"}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[12px] border transition-colors ml-1 ${
+              pushEnabled
+                ? "border-s-accent text-s-accent hover:opacity-70"
+                : "border-s-border text-s-muted hover:text-s-text hover:border-s-text"
+            }`}>
+            {pushEnabled ? <Bell size={13} /> : <BellOff size={13} />}
+            {pushEnabled ? "Alarmas activas" : "Activar alarmas"}
           </button>
           <button onClick={() => setModal({ date: cursor })}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-s-accent text-white rounded text-[12px] hover:opacity-80 transition-opacity ml-2">

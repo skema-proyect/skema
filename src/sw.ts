@@ -13,15 +13,16 @@ self.addEventListener("push", event => {
   const { title, body, tag, url } = event.data.json() as {
     title: string; body: string; tag?: string; url?: string;
   };
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: "/ant-skema.png",
-      badge: "/ant-skema.png",
-      tag: tag ?? "skema-reminder",
-      data: { url: url ?? "/agenda" },
-    })
-  );
+  const options: NotificationOptions & { vibrate?: number[]; silent?: boolean } = {
+    body,
+    icon:    "/ant-skema.png",
+    badge:   "/ant-skema.png",
+    tag:     tag ?? "skema-reminder",
+    vibrate: [200, 100, 200],
+    silent:  false,
+    data:    { url: url ?? "/agenda" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", event => {
