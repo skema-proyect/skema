@@ -486,12 +486,13 @@ Si no hay suficiente información para crear el evento, devuelve:
           model:     MODELS.fast,
           _debug,
           eventData: {
-            title:       parsed.title,
-            date:        parsed.date,
-            startTime:   parsed.start_time ?? undefined,
-            endTime:     parsed.end_time   ?? undefined,
-            description: parsed.description ?? undefined,
-            color:       "#000000",
+            title:           parsed.title,
+            date:            parsed.date,
+            startTime:       parsed.start_time  ?? undefined,
+            endTime:         parsed.end_time    ?? undefined,
+            description:     parsed.description ?? undefined,
+            color:           "#000000",
+            reminderMinutes: 30,
           },
         });
       }

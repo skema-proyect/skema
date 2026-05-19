@@ -134,11 +134,12 @@ export const notes = {
 function mapEvent(e: Record<string, unknown>): CalendarEvent {
   return {
     id: e.id as string, title: e.title as string, date: e.date as string,
-    startTime: (e.start_time as string) ?? undefined,
-    endTime: (e.end_time as string) ?? undefined,
-    description: (e.description as string) ?? undefined,
-    color: (e.color as string) ?? "#000000",
-    projectId: (e.project_id as string | null) ?? null,
+    startTime:       (e.start_time as string)   ?? undefined,
+    endTime:         (e.end_time as string)     ?? undefined,
+    description:     (e.description as string)  ?? undefined,
+    color:           (e.color as string)        ?? "#000000",
+    projectId:       (e.project_id as string | null) ?? null,
+    reminderMinutes: (e.reminder_minutes as number) ?? undefined,
   };
 }
 
@@ -159,12 +160,13 @@ export const events = {
   create: async (ev: Omit<CalendarEvent, "id">): Promise<CalendarEvent> => {
     const user_id = await getUid();
     const { data, error } = await supabase.from("events").insert({
-      title: ev.title, date: ev.date,
-      start_time:  ev.startTime  ?? null,
-      end_time:    ev.endTime    ?? null,
-      description: ev.description ?? null,
-      color:       ev.color ?? "#000000",
-      project_id:  ev.projectId ?? null,
+      title:            ev.title, date: ev.date,
+      start_time:       ev.startTime       ?? null,
+      end_time:         ev.endTime         ?? null,
+      description:      ev.description     ?? null,
+      color:            ev.color           ?? "#000000",
+      project_id:       ev.projectId       ?? null,
+      reminder_minutes: ev.reminderMinutes ?? null,
       user_id,
     }).select().single();
     if (error) throw new Error(error.message);
@@ -173,13 +175,14 @@ export const events = {
 
   update: async (id: string, updates: Partial<Omit<CalendarEvent, "id">>) => {
     const row: Record<string, unknown> = {};
-    if (updates.title       !== undefined) row.title       = updates.title;
-    if (updates.date        !== undefined) row.date        = updates.date;
-    if (updates.startTime   !== undefined) row.start_time  = updates.startTime;
-    if (updates.endTime     !== undefined) row.end_time    = updates.endTime;
-    if (updates.description !== undefined) row.description = updates.description;
-    if (updates.color       !== undefined) row.color       = updates.color;
-    if (updates.projectId   !== undefined) row.project_id  = updates.projectId;
+    if (updates.title           !== undefined) row.title            = updates.title;
+    if (updates.date            !== undefined) row.date             = updates.date;
+    if (updates.startTime       !== undefined) row.start_time       = updates.startTime;
+    if (updates.endTime         !== undefined) row.end_time         = updates.endTime;
+    if (updates.description     !== undefined) row.description      = updates.description;
+    if (updates.color           !== undefined) row.color            = updates.color;
+    if (updates.projectId       !== undefined) row.project_id       = updates.projectId;
+    if (updates.reminderMinutes !== undefined) row.reminder_minutes = updates.reminderMinutes ?? null;
     await supabase.from("events").update(row).eq("id", id);
   },
 

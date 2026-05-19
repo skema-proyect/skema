@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Plus, X, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X, Trash2, Bell, BellOff } from "lucide-react";
 import { events as eventsDB } from "@/lib/db";
+import { subscribeToPush, isPushEnabled } from "@/lib/push";
 import type { CalendarEvent } from "@/types";
 
 type View = "dia" | "semana" | "mes" | "año";
@@ -24,15 +25,28 @@ function firstDayOfMonth(year: number, month: number) { const d = new Date(year,
 
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`);
 
+const REMINDER_OPTIONS = [
+  { label: "Sin recordatorio", value: null },
+  { label: "15 min antes",     value: 15   },
+  { label: "30 min antes",     value: 30   },
+  { label: "1 hora antes",     value: 60   },
+  { label: "2 horas antes",    value: 120  },
+  { label: "1 día antes",      value: 1440 },
+];
+
 export default function AgendaView() {
-  const [view,      setView]      = useState<View>("mes");
-  const [cursor,    setCursor]    = useState(today());
-  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
-  const [modal,     setModal]     = useState<{ date: string; event?: CalendarEvent } | null>(null);
+  const [view,        setView]        = useState<View>("mes");
+  const [cursor,      setCursor]      = useState(today());
+  const [allEvents,   setAllEvents]   = useState<CalendarEvent[]>([]);
+  const [modal,       setModal]       = useState<{ date: string; event?: CalendarEvent } | null>(null);
+  const [pushEnabled, setPushEnabled] = useState(false);
 
   const reload = async () => setAllEvents(await eventsDB.getAll());
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    isPushEnabled().then(setPushEnabled);
+  }, []);
 
   const navigate = (dir: 1 | -1) => {
     const d = new Date(cursor);
@@ -76,6 +90,12 @@ export default function AgendaView() {
               {v}
             </button>
           ))}
+          <button
+            onClick={async () => { const ok = await subscribeToPush(); if (ok) setPushEnabled(true); }}
+            title={pushEnabled ? "Notificaciones activas" : "Activar notificaciones"}
+            className={`p-1.5 rounded transition-colors ml-1 ${pushEnabled ? "text-s-accent" : "text-s-muted hover:text-s-text"}`}>
+            {pushEnabled ? <Bell size={15} /> : <BellOff size={15} />}
+          </button>
           <button onClick={() => setModal({ date: cursor })}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-s-accent text-white rounded text-[12px] hover:opacity-80 transition-opacity ml-2">
             <Plus size={13} /> Evento
@@ -268,21 +288,32 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
   date: string; event?: CalendarEvent;
   onClose: () => void; onSave: () => Promise<void>; onDelete: () => Promise<void>;
 }) {
-  const [title,   setTitle]   = useState(event?.title ?? "");
-  const [selDate, setSelDate] = useState(event?.date ?? date);
-  const [start,   setStart]   = useState(event?.startTime ?? "");
-  const [end,     setEnd]     = useState(event?.endTime ?? "");
-  const [desc,    setDesc]    = useState(event?.description ?? "");
-  const [color,   setColor]   = useState(event?.color ?? "#000000");
-  const [saving,  setSaving]  = useState(false);
+  const [title,    setTitle]    = useState(event?.title ?? "");
+  const [selDate,  setSelDate]  = useState(event?.date ?? date);
+  const [start,    setStart]    = useState(event?.startTime ?? "");
+  const [end,      setEnd]      = useState(event?.endTime ?? "");
+  const [desc,     setDesc]     = useState(event?.description ?? "");
+  const [color,    setColor]    = useState(event?.color ?? "#000000");
+  const [reminder, setReminder] = useState<number | null>(event?.reminderMinutes ?? null);
+  const [saving,   setSaving]   = useState(false);
 
   const save = async () => {
     if (!title.trim()) return;
     setSaving(true);
+    const fields = {
+      title, date: selDate,
+      startTime:       start    || undefined,
+      endTime:         end      || undefined,
+      description:     desc     || undefined,
+      color,
+      reminderMinutes: reminder ?? undefined,
+    };
     if (event) {
-      await eventsDB.update(event.id, { title, date: selDate, startTime: start || undefined, endTime: end || undefined, description: desc || undefined, color });
+      await eventsDB.update(event.id, fields);
     } else {
-      await eventsDB.create({ title, date: selDate, startTime: start || undefined, endTime: end || undefined, description: desc || undefined, color });
+      await eventsDB.create(fields);
+      // Si tiene recordatorio, asegurar que las notificaciones están activas
+      if (reminder !== null) subscribeToPush().catch(() => {});
     }
     await onSave();
   };
@@ -332,10 +363,26 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
                 className="w-full mt-1 border border-s-border rounded px-2 py-1.5 text-[12px] text-s-text bg-s-surface outline-none focus:border-s-text" />
             </div>
           </div>
-          <div>
-            <label className="text-[10px] text-s-muted uppercase tracking-wider">Descripción</label>
-            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} placeholder="Notas opcionales..."
-              className="w-full mt-1 border border-s-border rounded px-3 py-2 text-[12px] text-s-text bg-s-surface outline-none resize-none focus:border-s-text placeholder:text-s-muted" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-s-muted uppercase tracking-wider">Descripción</label>
+              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} placeholder="Notas opcionales..."
+                className="w-full mt-1 border border-s-border rounded px-3 py-2 text-[12px] text-s-text bg-s-surface outline-none resize-none focus:border-s-text placeholder:text-s-muted" />
+            </div>
+            <div>
+              <label className="text-[10px] text-s-muted uppercase tracking-wider flex items-center gap-1">
+                <Bell size={10} /> Recordatorio
+              </label>
+              <select
+                value={reminder ?? ""}
+                onChange={e => setReminder(e.target.value === "" ? null : Number(e.target.value))}
+                className="w-full mt-1 border border-s-border rounded px-2 py-1.5 text-[12px] text-s-text bg-s-surface outline-none focus:border-s-text"
+              >
+                {REMINDER_OPTIONS.map(o => (
+                  <option key={String(o.value)} value={o.value ?? ""}>{o.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-between px-5 py-3 border-t border-s-border">
