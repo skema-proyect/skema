@@ -314,12 +314,12 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-s-bg border border-s-border rounded-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-s-border">
+      <div className="bg-s-bg border border-s-border rounded-xl w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-s-border flex-shrink-0">
           <h3 className="text-[14px] font-medium text-s-text">{event ? "Editar evento" : "Nuevo evento"}</h3>
           <button onClick={onClose} className="text-s-muted hover:text-s-text"><X size={16} /></button>
         </div>
-        <div className="px-5 py-4 space-y-3">
+        <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1">
           <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
             placeholder="Título del evento"
             className="w-full border-b border-s-border py-2 text-[14px] text-s-text bg-transparent outline-none placeholder:text-s-muted" />
