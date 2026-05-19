@@ -81,36 +81,29 @@ export default function AgendaView() {
             <button onClick={() => navigate(-1)} className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronLeft size={16} /></button>
             <button onClick={() => navigate(1)}  className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronRight size={16} /></button>
           </div>
+          {/* Campana siempre visible en el lado izquierdo */}
+          <button
+            onClick={async () => {
+              if (pushEnabled) { await unsubscribeFromPush(); setPushEnabled(false); }
+              else { const ok = await subscribeToPush(); if (ok) setPushEnabled(true); }
+            }}
+            title={pushEnabled ? "Desactivar alarmas" : "Activar alarmas"}
+            className={`p-1.5 rounded border transition-colors ${
+              pushEnabled ? "border-s-accent text-s-accent" : "border-s-border text-s-muted hover:text-s-text hover:border-s-text"
+            }`}>
+            {pushEnabled ? <Bell size={14} /> : <BellOff size={14} />}
+          </button>
           <span className="text-[13px] font-medium text-s-text hidden sm:block">{headerLabel()}</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {(["dia","semana","mes","año"] as View[]).map(v => (
             <button key={v} onClick={() => setView(v)}
               className={`px-2 py-1.5 rounded text-[11px] capitalize transition-colors ${view === v ? "bg-s-accent text-white" : "text-s-muted hover:text-s-text"}`}>
               {v}
             </button>
           ))}
-          {/* Toggle alarmas — icono con color según estado */}
-          <button
-            onClick={async () => {
-              if (pushEnabled) {
-                await unsubscribeFromPush();
-                setPushEnabled(false);
-              } else {
-                const ok = await subscribeToPush();
-                if (ok) setPushEnabled(true);
-              }
-            }}
-            title={pushEnabled ? "Desactivar alarmas" : "Activar alarmas"}
-            className={`p-1.5 rounded border transition-colors ${
-              pushEnabled
-                ? "border-s-accent text-s-accent"
-                : "border-s-border text-s-muted hover:text-s-text hover:border-s-text"
-            }`}>
-            {pushEnabled ? <Bell size={14} /> : <BellOff size={14} />}
-          </button>
           <button onClick={() => setModal({ date: cursor })}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-s-accent text-white rounded text-[12px] hover:opacity-80 transition-opacity ml-2">
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-s-accent text-white rounded text-[12px] hover:opacity-80 transition-opacity ml-1">
             <Plus size={13} /> Evento
           </button>
         </div>
