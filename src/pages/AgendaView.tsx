@@ -296,7 +296,7 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
       endTime:         end      || undefined,
       description:     desc     || undefined,
       color,
-      reminderMinutes: reminder ?? undefined,
+      reminderMinutes: reminder, // null = desactivado, número = minutos antes
     };
     if (event) {
       await eventsDB.update(event.id, fields);

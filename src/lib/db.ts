@@ -182,7 +182,7 @@ export const events = {
     if (updates.description     !== undefined) row.description      = updates.description;
     if (updates.color           !== undefined) row.color            = updates.color;
     if (updates.projectId       !== undefined) row.project_id       = updates.projectId;
-    if (updates.reminderMinutes !== undefined) row.reminder_minutes = updates.reminderMinutes ?? null;
+    if ("reminderMinutes" in updates) row.reminder_minutes = updates.reminderMinutes ?? null;
     await supabase.from("events").update(row).eq("id", id);
   },
 

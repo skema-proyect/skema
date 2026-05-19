@@ -41,5 +41,5 @@ export interface CalendarEvent {
   description?: string;
   color?: string;
   projectId?: string | null;
-  reminderMinutes?: number; // minutos antes del evento para notificar
+  reminderMinutes?: number | null; // minutos antes del evento para notificar
 }
