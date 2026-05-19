@@ -570,7 +570,9 @@ function detectIntent(message) {
     /\b(anota|apunta|pon|mete|guarda|anade|anadir)\b.{0,40}\b(agenda|calendario)\b/.test(n) ||      // verbo + agenda
     /\b(recordatorio|recuerdame|ponme.{0,20}(cita|reunion)|programa.{0,25}(reuni|cita)|reserva.{0,20}cita)\b/.test(n) ||
     /\b(reunion|cita|llamada|visita|evento)\b.{0,60}\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo|\d{1,2})\b/.test(n) ||
-    /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reunion|cita|llamada|visita|evento)\b/.test(n)
+    /\b(tengo|hay|tenemos|quiero|necesito)\b.{0,40}\b(reunion|cita|llamada|visita|evento)\b/.test(n) ||
+    /\b(ponme|apuntame|meteme|pon|mete)\b.{0,30}\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/.test(n) ||  // "ponme mañana X"
+    /\b(ponme|apuntame|meteme|pon|mete)\b.{0,50}\ba\s+las?\s+\d/.test(n)                            // "ponme para... a las X"
   )
     return "agenda";
 
@@ -616,7 +618,15 @@ export default async function handler(req, res) {
 
   // If any previous message in this conversation was a sketch, stay in sketch mode
   const isSketchConversation = messages.some(m => m.tool === "sketch");
-  const intent = isSketchConversation ? "sketch" : detectIntent(lastUser.content);
+  let intent = isSketchConversation ? "sketch" : detectIntent(lastUser.content);
+
+  // Si ya había interacción de agenda Y el usuario da detalles (fecha/hora/título), mantener en agenda
+  if (intent === "chat" && hasAgendaHistory) {
+    const n2 = lastUser.content.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const hasDateTime = /\b(manana|hoy|lunes|martes|miercoles|jueves|viernes|sabado|domingo|\d{1,2}\s+de|\d{1,2}:\d{2}|a\s+las?\s+\d)\b/.test(n2);
+    const hasEventDetail = /\b(titulo|titulo:|fecha|fecha:|hora|hora:|reunion|cita|llamada|visita|evento|con\s+el|con\s+la|con\s+don|con\s+dona)\b/.test(n2);
+    if (hasDateTime || hasEventDetail) intent = "agenda";
+  }
   const history = messages.map(m => ({ role: m.role, content: m.content }));
   const _debug = { intent, msg: lastUser.content.slice(0, 60) };
 
@@ -647,10 +657,9 @@ Si no hay suficiente información para crear el evento, devuelve:
 
       let parsed = null;
       try {
-        // Haiku sometimes wraps JSON in ```json``` blocks despite instructions
-        const raw = extraction.content[0].text.trim()
-          .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-        parsed = JSON.parse(raw);
+        const raw  = extraction.content[0].text.trim();
+        const start = raw.indexOf("{");
+        if (start !== -1) parsed = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1));
       } catch {}
 
       if (parsed && !parsed.error && parsed.title && parsed.date) {
@@ -704,9 +713,9 @@ Si no hay contenido suficiente:
 
       let parsed = null;
       try {
-        const raw = extraction.content[0].text.trim()
-          .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-        parsed = JSON.parse(raw);
+        const raw   = extraction.content[0].text.trim();
+        const start = raw.indexOf("{");
+        if (start !== -1) parsed = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1));
       } catch {}
 
       if (parsed && !parsed.error && parsed.title) {
