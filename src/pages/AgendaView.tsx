@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Plus, X, Trash2, Bell, BellOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X, Trash2, Bell } from "lucide-react";
 import { events as eventsDB } from "@/lib/db";
-import { subscribeToPush, isPushEnabled, unsubscribeFromPush } from "@/lib/push";
+import { subscribeToPush } from "@/lib/push";
 import type { CalendarEvent } from "@/types";
 
 type View = "dia" | "semana" | "mes" | "año";
@@ -35,18 +35,13 @@ const REMINDER_OPTIONS = [
 ];
 
 export default function AgendaView() {
-  const [view,        setView]        = useState<View>("mes");
-  const [cursor,      setCursor]      = useState(today());
-  const [allEvents,   setAllEvents]   = useState<CalendarEvent[]>([]);
-  const [modal,       setModal]       = useState<{ date: string; event?: CalendarEvent } | null>(null);
-  const [pushEnabled, setPushEnabled] = useState(false);
+  const [view,      setView]      = useState<View>("mes");
+  const [cursor,    setCursor]    = useState(today());
+  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
+  const [modal,     setModal]     = useState<{ date: string; event?: CalendarEvent } | null>(null);
 
   const reload = async () => setAllEvents(await eventsDB.getAll());
-
-  useEffect(() => {
-    reload();
-    isPushEnabled().then(setPushEnabled);
-  }, []);
+  useEffect(() => { reload(); }, []);
 
   const navigate = (dir: 1 | -1) => {
     const d = new Date(cursor);
@@ -81,18 +76,6 @@ export default function AgendaView() {
             <button onClick={() => navigate(-1)} className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronLeft size={16} /></button>
             <button onClick={() => navigate(1)}  className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronRight size={16} /></button>
           </div>
-          {/* Campana siempre visible en el lado izquierdo */}
-          <button
-            onClick={async () => {
-              if (pushEnabled) { await unsubscribeFromPush(); setPushEnabled(false); }
-              else { const ok = await subscribeToPush(); if (ok) setPushEnabled(true); }
-            }}
-            title={pushEnabled ? "Desactivar alarmas" : "Activar alarmas"}
-            className={`p-1.5 rounded border transition-colors ${
-              pushEnabled ? "border-s-accent text-s-accent" : "border-s-border text-s-muted hover:text-s-text hover:border-s-text"
-            }`}>
-            {pushEnabled ? <Bell size={14} /> : <BellOff size={14} />}
-          </button>
           <span className="text-[13px] font-medium text-s-text hidden sm:block">{headerLabel()}</span>
         </div>
         <div className="flex items-center gap-1">
@@ -318,9 +301,9 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
       await eventsDB.update(event.id, fields);
     } else {
       await eventsDB.create(fields);
-      // Si tiene recordatorio, asegurar que las notificaciones están activas
-      if (reminder !== null) subscribeToPush().catch(() => {});
     }
+    // Si tiene alarma, suscribir al push (pide permiso si aún no lo tiene)
+    if (reminder !== null) subscribeToPush().catch(() => {});
     await onSave();
   };
 
@@ -369,26 +352,36 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
                 className="w-full mt-1 border border-s-border rounded px-2 py-1.5 text-[12px] text-s-text bg-s-surface outline-none focus:border-s-text" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] text-s-muted uppercase tracking-wider">Descripción</label>
-              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} placeholder="Notas opcionales..."
-                className="w-full mt-1 border border-s-border rounded px-3 py-2 text-[12px] text-s-text bg-s-surface outline-none resize-none focus:border-s-text placeholder:text-s-muted" />
-            </div>
-            <div>
-              <label className="text-[10px] text-s-muted uppercase tracking-wider flex items-center gap-1">
-                <Bell size={10} /> Recordatorio
-              </label>
+          <div>
+            <label className="text-[10px] text-s-muted uppercase tracking-wider">Descripción</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} placeholder="Notas opcionales..."
+              className="w-full mt-1 border border-s-border rounded px-3 py-2 text-[12px] text-s-text bg-s-surface outline-none resize-none focus:border-s-text placeholder:text-s-muted" />
+          </div>
+
+          {/* Alarma — fila completa, bien visible */}
+          <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors ${reminder !== null ? "border-s-accent bg-s-accent/5" : "border-s-border"}`}>
+            <button
+              type="button"
+              onClick={() => setReminder(reminder !== null ? null : 30)}
+              className="flex items-center gap-2 flex-1 text-left"
+            >
+              <Bell size={15} className={reminder !== null ? "text-s-accent" : "text-s-muted"} />
+              <span className={`text-[13px] ${reminder !== null ? "text-s-text font-medium" : "text-s-muted"}`}>
+                {reminder !== null ? "Alarma activada" : "Activar alarma"}
+              </span>
+            </button>
+            {reminder !== null && (
               <select
-                value={reminder ?? ""}
-                onChange={e => setReminder(e.target.value === "" ? null : Number(e.target.value))}
-                className="w-full mt-1 border border-s-border rounded px-2 py-1.5 text-[12px] text-s-text bg-s-surface outline-none focus:border-s-text"
+                value={reminder}
+                onChange={e => setReminder(Number(e.target.value))}
+                onClick={e => e.stopPropagation()}
+                className="border border-s-border rounded px-2 py-1 text-[12px] text-s-text bg-s-bg outline-none focus:border-s-accent"
               >
-                {REMINDER_OPTIONS.map(o => (
-                  <option key={String(o.value)} value={o.value ?? ""}>{o.label}</option>
+                {REMINDER_OPTIONS.filter(o => o.value !== null).map(o => (
+                  <option key={o.value} value={o.value!}>{o.label}</option>
                 ))}
               </select>
-            </div>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-between px-5 py-3 border-t border-s-border">
