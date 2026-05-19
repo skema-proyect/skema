@@ -72,24 +72,25 @@ export default function AgendaView() {
     <div className="flex flex-col h-full bg-s-bg overflow-hidden">
 
       <div className="flex items-center justify-between px-4 py-3 border-b border-s-border flex-shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button onClick={() => setCursor(today())}
-            className="px-3 py-1.5 border border-s-border rounded text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors">
+            className="px-2.5 py-1.5 border border-s-border rounded text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors">
             Hoy
           </button>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button onClick={() => navigate(-1)} className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronLeft size={16} /></button>
             <button onClick={() => navigate(1)}  className="p-1.5 rounded hover:bg-s-surface text-s-muted hover:text-s-text transition-colors"><ChevronRight size={16} /></button>
           </div>
-          <span className="text-[14px] font-medium text-s-text">{headerLabel()}</span>
+          <span className="text-[13px] font-medium text-s-text hidden sm:block">{headerLabel()}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {(["dia","semana","mes","año"] as View[]).map(v => (
             <button key={v} onClick={() => setView(v)}
-              className={`px-3 py-1.5 rounded text-[12px] capitalize transition-colors ${view === v ? "bg-s-accent text-white" : "text-s-muted hover:text-s-text"}`}>
+              className={`px-2 py-1.5 rounded text-[11px] capitalize transition-colors ${view === v ? "bg-s-accent text-white" : "text-s-muted hover:text-s-text"}`}>
               {v}
             </button>
           ))}
+          {/* Toggle alarmas — icono con color según estado */}
           <button
             onClick={async () => {
               if (pushEnabled) {
@@ -100,14 +101,13 @@ export default function AgendaView() {
                 if (ok) setPushEnabled(true);
               }
             }}
-            title={pushEnabled ? "Desactivar recordatorios" : "Activar recordatorios"}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[12px] border transition-colors ml-1 ${
+            title={pushEnabled ? "Desactivar alarmas" : "Activar alarmas"}
+            className={`p-1.5 rounded border transition-colors ${
               pushEnabled
-                ? "border-s-accent text-s-accent hover:opacity-70"
+                ? "border-s-accent text-s-accent"
                 : "border-s-border text-s-muted hover:text-s-text hover:border-s-text"
             }`}>
-            {pushEnabled ? <Bell size={13} /> : <BellOff size={13} />}
-            {pushEnabled ? "Alarmas activas" : "Activar alarmas"}
+            {pushEnabled ? <Bell size={14} /> : <BellOff size={14} />}
           </button>
           <button onClick={() => setModal({ date: cursor })}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-s-accent text-white rounded text-[12px] hover:opacity-80 transition-opacity ml-2">
