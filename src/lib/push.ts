@@ -11,6 +11,10 @@ function urlBase64ToUint8Array(base64: string): ArrayBuffer {
   return arr.buffer;
 }
 
+export function needsPermission(): boolean {
+  return "Notification" in window && Notification.permission === "default";
+}
+
 export async function subscribeToPush(): Promise<boolean> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
 

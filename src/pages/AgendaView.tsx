@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Trash2, Bell } from "lucide-react";
 import { events as eventsDB } from "@/lib/db";
-import { subscribeToPush } from "@/lib/push";
+import { subscribeToPush, needsPermission } from "@/lib/push";
 import type { CalendarEvent } from "@/types";
 
 type View = "dia" | "semana" | "mes" | "año";
@@ -277,14 +277,15 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
   date: string; event?: CalendarEvent;
   onClose: () => void; onSave: () => Promise<void>; onDelete: () => Promise<void>;
 }) {
-  const [title,    setTitle]    = useState(event?.title ?? "");
-  const [selDate,  setSelDate]  = useState(event?.date ?? date);
-  const [start,    setStart]    = useState(event?.startTime ?? "");
-  const [end,      setEnd]      = useState(event?.endTime ?? "");
-  const [desc,     setDesc]     = useState(event?.description ?? "");
-  const [color,    setColor]    = useState(event?.color ?? "#000000");
-  const [reminder, setReminder] = useState<number | null>(event?.reminderMinutes ?? null);
-  const [saving,   setSaving]   = useState(false);
+  const [title,       setTitle]       = useState(event?.title ?? "");
+  const [selDate,     setSelDate]     = useState(event?.date ?? date);
+  const [start,       setStart]       = useState(event?.startTime ?? "");
+  const [end,         setEnd]         = useState(event?.endTime ?? "");
+  const [desc,        setDesc]        = useState(event?.description ?? "");
+  const [color,       setColor]       = useState(event?.color ?? "#000000");
+  const [reminder,    setReminder]    = useState<number | null>(event?.reminderMinutes ?? null);
+  const [saving,      setSaving]      = useState(false);
+  const [askPermission, setAskPermission] = useState(false);
 
   const save = async () => {
     if (!title.trim()) return;
@@ -302,8 +303,7 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
     } else {
       await eventsDB.create(fields);
     }
-    // Si tiene alarma, suscribir al push (pide permiso si aún no lo tiene)
-    if (reminder !== null) subscribeToPush().catch(() => {});
+    // La suscripción push se gestiona desde el toggle de alarma, no al guardar
     await onSave();
   };
 
@@ -358,11 +358,43 @@ function EventModal({ date, event, onClose, onSave, onDelete }: {
               className="w-full mt-1 border border-s-border rounded px-3 py-2 text-[12px] text-s-text bg-s-surface outline-none resize-none focus:border-s-text placeholder:text-s-muted" />
           </div>
 
+          {/* Banner de permiso SKEMA — aparece al activar alarma si el navegador aún no tiene permiso */}
+          {askPermission && (
+            <div className="bg-s-surface border border-s-accent/40 rounded-xl px-4 py-3 space-y-2">
+              <p className="text-[13px] font-medium text-s-text">SKEMA quiere enviarte recordatorios</p>
+              <p className="text-[12px] text-s-muted">Recibirás una notificación en este dispositivo antes de tus citas. El sistema operativo te pedirá confirmación.</p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setAskPermission(false);
+                    await subscribeToPush();
+                  }}
+                  className="flex-1 py-2 bg-s-accent text-white rounded-lg text-[12px] font-medium hover:opacity-80 transition-opacity"
+                >
+                  Permitir notificaciones
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAskPermission(false); setReminder(null); }}
+                  className="px-4 py-2 border border-s-border rounded-lg text-[12px] text-s-muted hover:text-s-text transition-colors"
+                >
+                  Ahora no
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Alarma — fila completa, bien visible */}
           <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors ${reminder !== null ? "border-s-accent bg-s-accent/5" : "border-s-border"}`}>
             <button
               type="button"
-              onClick={() => setReminder(reminder !== null ? null : 30)}
+              onClick={() => {
+                if (reminder !== null) { setReminder(null); return; }
+                setReminder(30);
+                if (needsPermission()) setAskPermission(true);
+                else subscribeToPush().catch(() => {});
+              }}
               className="flex items-center gap-2 flex-1 text-left"
             >
               <Bell size={15} className={reminder !== null ? "text-s-accent" : "text-s-muted"} />
