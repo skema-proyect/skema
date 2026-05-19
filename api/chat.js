@@ -407,6 +407,13 @@ function detectIntent(message) {
   )
     return "agenda";
 
+  if (
+    /\b(crea|crear|nueva|nuevo|escribe|escribir|guarda|guardar|haz|hacer)\b.{0,30}\bnota\b/.test(n) ||
+    /\bnota\b.{0,30}\b(nueva|sobre|con|titulo|titulada)\b/.test(n) ||
+    /\banota\b.{0,40}(esto|lo siguiente|lo que|que)/.test(n)
+  )
+    return "nota";
+
   return "chat";
 }
 
@@ -504,6 +511,56 @@ Si no hay suficiente información para crear el evento, devuelve:
         tool: "agenda",
         model: MODELS.fast,
         _debug: { ..._debug, parsed, rawText },
+      });
+    }
+
+    // ── Nota — extraer título y contenido ──────────────────────────────────────
+    if (intent === "nota") {
+      const extraction = await client.messages.create({
+        model: MODELS.fast,
+        max_tokens: 600,
+        system: `Eres un asistente que crea notas a partir de mensajes en español.
+Extrae el título y el contenido de la nota pedida por el usuario.
+
+Devuelve ÚNICAMENTE un JSON válido (sin texto extra):
+{
+  "title": "título conciso de la nota",
+  "content": "contenido completo de la nota en texto plano",
+  "message": "confirmación breve, ej: Nota guardada."
+}
+
+Si el usuario no especificó título, genera uno conciso a partir del contenido.
+Si no hay contenido suficiente:
+{ "error": "motivo breve" }`,
+        messages: [{ role: "user", content: lastUser.content }],
+      });
+
+      let parsed = null;
+      try {
+        const raw = extraction.content[0].text.trim()
+          .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        parsed = JSON.parse(raw);
+      } catch {}
+
+      if (parsed && !parsed.error && parsed.title) {
+        return res.json({
+          content:  parsed.message ?? "Nota guardada.",
+          tool:     "nota",
+          model:    MODELS.fast,
+          _debug,
+          noteData: {
+            title:   parsed.title,
+            content: parsed.content ?? "",
+          },
+        });
+      }
+
+      const reason = parsed?.error ?? "no pude entender el contenido de la nota";
+      return res.json({
+        content: `Para crear la nota necesito un poco más de detalle: ${reason}. ¿Puedes indicarme el título y el contenido?`,
+        tool: "nota",
+        model: MODELS.fast,
+        _debug,
       });
     }
 

@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Download, CalendarCheck } from "lucide-react";
+import { Send, Mic, Download, CalendarCheck, StickyNote } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { conversations as convsDB, projects as projectsDB, events as eventsDB, uid, now } from "@/lib/db";
+import { conversations as convsDB, projects as projectsDB, events as eventsDB, notes as notesDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
 import type { Message } from "@/types";
@@ -131,6 +131,12 @@ export default function ChatView() {
 
       if (data.eventData) {
         try { await eventsDB.create(data.eventData); } catch {}
+      }
+      if (data.noteData) {
+        try {
+          const n = await notesDB.create();
+          await notesDB.update(n.id, { title: data.noteData.title, content: data.noteData.content });
+        } catch {}
       }
     } catch {
       const errMsg: Message = { id: uid(), role: "assistant", content: "Error de conexión. Inténtalo de nuevo.", tool: "chat", timestamp: now() };
@@ -344,6 +350,11 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
         {m.tool === "agenda" && (
           <div className="flex items-center gap-1.5 text-[12px] text-s-muted">
             <CalendarCheck size={13} /> Añadido a la agenda
+          </div>
+        )}
+        {m.tool === "nota" && (
+          <div className="flex items-center gap-1.5 text-[12px] text-s-muted">
+            <StickyNote size={13} /> Guardado en notas
           </div>
         )}
         {m.svg && (

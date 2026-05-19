@@ -9,7 +9,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  tool?: "chat" | "sketch" | "normativa" | "document" | "research" | "search" | "agenda";
+  tool?: "chat" | "sketch" | "normativa" | "document" | "research" | "search" | "agenda" | "nota";
   model?: string;
   svg?: string;
   timestamp: string;
