@@ -48,7 +48,9 @@ const NORMATIVA_SYSTEM = `${SYSTEM}
 MODO NORMATIVA ACTIVO:
 Responde como consultor experto en normativa urbanística de Gran Canaria.
 Cita artículos, planes y normas específicas cuando sea posible.
-Si hay ambigüedad, indícalo y orienta a la fuente oficial.`;
+Si hay ambigüedad, indícalo y orienta a la fuente oficial.
+
+DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — SITCAN], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro o el SITCAN si ya tienes esos datos aquí — da la respuesta directamente con lo que tienes. Solo remite al visor o a la oficina técnica si los datos de planeamiento no están disponibles en el contexto.`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -381,6 +383,11 @@ async function lookupNormativa(message) {
 
 // ── Catastro + SITCAN — datos reales de parcela ───────────────────────────────
 
+// La API del Catastro espera texto sin acentos y en mayúsculas
+function normCatastro(s) {
+  return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+}
+
 // Extrae componentes de dirección del mensaje usando Haiku
 async function extractAddress(message) {
   const msg = await client.messages.create({
@@ -390,12 +397,12 @@ Devuelve SOLO JSON válido (sin texto extra):
 {
   "tiene_direccion": true,
   "provincia": "LAS PALMAS" o "SANTA CRUZ DE TENERIFE",
-  "municipio": "MUNICIPIO EN MAYÚSCULAS",
-  "tipo_via": "CL" / "AV" / "PZ" / "CM" / "CR" / "UR",
-  "nombre_via": "NOMBRE SIN TIPO DE VÍA EN MAYÚSCULAS",
+  "municipio": "nombre del municipio",
+  "tipo_via": "CL" (calle) / "AV" (avenida) / "PZ" (plaza) / "CM" (camino) / "CR" (carretera) / "UR" (urbanización),
+  "nombre_via": "nombre de la vía sin el tipo",
   "numero": "número de portal o null"
 }
-Si no hay dirección concreta con calle y municipio, devuelve { "tiene_direccion": false }.`,
+Si no hay dirección concreta con vía y municipio, devuelve { "tiene_direccion": false }.`,
     messages: [{ role: "user", content: message }],
   });
   try {
@@ -405,14 +412,14 @@ Si no hay dirección concreta con calle y municipio, devuelve { "tiene_direccion
   } catch { return { tiene_direccion: false }; }
 }
 
-// Consulta la Sede Electrónica del Catastro por dirección
+// Consulta la Sede Electrónica del Catastro por dirección → referencia catastral + coords UTM
 async function lookupCatastro(addr) {
   try {
     const params = new URLSearchParams({
-      Provincia: addr.provincia ?? "LAS PALMAS",
-      Municipio: addr.municipio,
-      SiglaVia:  addr.tipo_via  ?? "CL",
-      NombreVia: addr.nombre_via,
+      Provincia: normCatastro(addr.provincia ?? "LAS PALMAS"),
+      Municipio: normCatastro(addr.municipio),
+      SiglaVia:  normCatastro(addr.tipo_via  ?? "CL"),
+      NombreVia: normCatastro(addr.nombre_via),
     });
     if (addr.numero) params.set("Numero", String(addr.numero));
 
@@ -424,7 +431,7 @@ async function lookupCatastro(addr) {
 
     const pc1 = xml.match(/<pc1>([^<]+)<\/pc1>/)?.[1]?.trim();
     const pc2  = xml.match(/<pc2>([^<]+)<\/pc2>/)?.[1]?.trim();
-    if (!pc1) return null;
+    if (!pc1) return { _err: xml.match(/<err>([^<]*)<\/err>/)?.[1]?.trim() ?? "sin_resultado" };
 
     const xcen = parseFloat(xml.match(/<xcen>([^<]+)<\/xcen>/)?.[1] ?? "NaN");
     const ycen = parseFloat(xml.match(/<ycen>([^<]+)<\/ycen>/)?.[1] ?? "NaN");
@@ -436,31 +443,49 @@ async function lookupCatastro(addr) {
       ycen: isNaN(ycen) ? null : ycen,
       direccion: ldt,
     };
+  } catch (e) { return { _err: e.message }; }
+}
+
+// Consulta detalle de parcela por referencia catastral (uso, superficie)
+async function lookupCatastroDetalle(refCatastral) {
+  try {
+    const res = await fetch(
+      `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/REST/OVCCallejero.svc/Consulta_DNPPP?RC=${encodeURIComponent(refCatastral)}`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    const xml = await res.text();
+    const luso = xml.match(/<luso>([^<]+)<\/luso>/)?.[1]?.trim();  // uso (Residencial, Industrial…)
+    const stl  = xml.match(/<stl>([^<]+)<\/stl>/)?.[1]?.trim();   // superficie total suelo m²
+    const sfc  = xml.match(/<sfc>([^<]+)<\/sfc>/)?.[1]?.trim();   // superficie construida m²
+    return luso ? { uso: luso, supSuelo: stl, supConst: sfc } : null;
   } catch { return null; }
 }
 
-// Consulta SITCAN WFS para calificación urbanística — best effort
+// Consulta calificación urbanística vía SITCAN/IDE Canarias WFS — best effort
 async function lookupSITCAN(xcen, ycen) {
   if (!xcen || !ycen) return null;
-  const buf  = 5;
+  const buf  = 10;
   const bbox = `${xcen - buf},${ycen - buf},${xcen + buf},${ycen + buf}`;
 
-  // Candidatos de layer según planeamiento GC en SITCAN/GRAFCAN
-  const layers = [
-    "SITCAN:PGOU_CALIFICACION_GC",
-    "SITCAN:CALIFICACION_SUELO_GC",
-    "SITCAN:CLASIFICACION_SUELO_GC",
-    "SITCAN:PLANEAMIENTO_GC",
+  // Candidatos: varios endpoints y layer names — probamos hasta encontrar respuesta
+  const candidates = [
+    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:PGOU_CALIFICACION_GC"    },
+    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:CALIFICACION_SUELO_GC"   },
+    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:CLASIFICACION_SUELO_GC"  },
+    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:PLANEAMIENTO_GC"         },
+    { base: "https://idecan2.grafcan.es/ServicioWFS/wfs",  layer: "GC_PGOU:Calificacion_Suelo"     },
+    { base: "https://idecan2.grafcan.es/ServicioWFS/wfs",  layer: "GC:Calificacion_Suelo"          },
+    { base: "https://idecan1.grafcan.es/ServicioWFS/wfs",  layer: "GC_PGOU:Calificacion_Suelo"     },
   ];
 
-  for (const typeName of layers) {
+  for (const { base, layer } of candidates) {
     try {
-      const url = `https://visor.sitcan.es/sitcan/ows?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=${encodeURIComponent(typeName)}&SRSNAME=EPSG:32628&BBOX=${bbox},EPSG:32628&outputFormat=application%2Fjson`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const url = `${base}?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=${encodeURIComponent(layer)}&SRSNAME=EPSG:32628&BBOX=${bbox},EPSG:32628&outputFormat=application%2Fjson`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
       if (!res.ok) continue;
       const json = await res.json();
       if (json.features?.length > 0) {
-        return { layer: typeName, props: json.features[0].properties };
+        return { layer, props: json.features[0].properties };
       }
     } catch { continue; }
   }
@@ -764,15 +789,29 @@ INSTRUCCIÓN CRÍTICA para cambios:
 
       // Catastro → SITCAN (sequential, each needs the previous result)
       let parcelBlock = "";
+      const normDebug = { hasAddressHint, addr: addr.tiene_direccion ? addr : null };
+
       if (addr.tiene_direccion) {
         const parcel = await lookupCatastro(addr);
-        if (parcel) {
+        normDebug.catastro = parcel;
+
+        if (parcel && parcel.refCatastral) {
+          // Fetch parcel detail and SITCAN in parallel
+          const [detalle, zoning] = await Promise.all([
+            lookupCatastroDetalle(parcel.refCatastral),
+            lookupSITCAN(parcel.xcen, parcel.ycen),
+          ]);
+          normDebug.detalle = detalle;
+          normDebug.sitcan  = zoning;
+
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
 Referencia catastral: ${parcel.refCatastral}
-Dirección registrada: ${parcel.direccion}
-Enlace: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${parcel.refCatastral}`;
+Dirección registrada: ${parcel.direccion}${detalle ? `
+Uso catastral: ${detalle.uso ?? "–"}
+Superficie suelo: ${detalle.supSuelo ? detalle.supSuelo + " m²" : "–"}
+Superficie construida: ${detalle.supConst ? detalle.supConst + " m²" : "–"}` : ""}
+Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${parcel.refCatastral}`;
 
-          const zoning = await lookupSITCAN(parcel.xcen, parcel.ycen);
           if (zoning) {
             const props = Object.entries(zoning.props)
               .filter(([, v]) => v !== null && v !== "")
@@ -783,18 +822,17 @@ Enlace: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${
         }
       }
 
-      const systemParts = [
+      const system = [
         dbContext ? `${NORMATIVA_SYSTEM}\n\n${dbContext}` : NORMATIVA_SYSTEM,
         parcelBlock ? `\n\n${parcelBlock}` : "",
         projectContext,
-      ];
-      const system = systemParts.join("");
+      ].join("");
 
       const msg = await client.messages.create({
         model: MODELS.smart, max_tokens: 2048,
         system, messages: history,
       });
-      return res.json({ content: msg.content[0]?.text ?? "", tool: "normativa", model: MODELS.smart });
+      return res.json({ content: msg.content[0]?.text ?? "", tool: "normativa", model: MODELS.smart, _debug: normDebug });
     }
 
     // ── Document ──
