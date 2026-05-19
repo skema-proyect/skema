@@ -472,7 +472,12 @@ Si no hay suficiente información para crear el evento, devuelve:
       });
 
       let parsed = null;
-      try { parsed = JSON.parse(extraction.content[0].text.trim()); } catch {}
+      try {
+        // Haiku sometimes wraps JSON in ```json``` blocks despite instructions
+        const raw = extraction.content[0].text.trim()
+          .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        parsed = JSON.parse(raw);
+      } catch {}
 
       if (parsed && !parsed.error && parsed.title && parsed.date) {
         return res.json({
