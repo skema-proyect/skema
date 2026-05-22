@@ -50,7 +50,7 @@ Responde como consultor experto en normativa urbanística de Gran Canaria.
 Cita artículos, planes y normas específicas cuando sea posible.
 Si hay ambigüedad, indícalo y orienta a la fuente oficial.
 
-DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — SITCAN], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro o el SITCAN si ya tienes esos datos aquí — da la respuesta directamente con lo que tienes. Solo remite al visor o a la oficina técnica si los datos de planeamiento no están disponibles en el contexto.`;
+DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro ni en ningún visor si ya tienes esos datos aquí — da la respuesta directamente con lo que tienes. Si los datos de planeamiento no están disponibles en el contexto, remite al usuario a visor.grafcan.es (no al SITCAN, que ya no es la fuente oficial).`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -386,6 +386,55 @@ async function lookupNormativa(message) {
 // La API del Catastro espera texto sin acentos y en mayúsculas
 function normCatastro(s) {
   return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+}
+
+// WGS84 → UTM Zone 28N (EPSG:32628) — conversión matemática pura, sin API
+function wgs84ToUtm28N(lat, lon) {
+  const a  = 6378137.0;
+  const f  = 1 / 298.257223563;
+  const e2 = 2 * f - f * f;
+  const k0 = 0.9996;
+  const lon0 = -15 * Math.PI / 180; // meridiano central zona 28
+  const FE = 500000;
+
+  const phi    = lat * Math.PI / 180;
+  const lam    = lon * Math.PI / 180;
+  const sinPhi = Math.sin(phi), cosPhi = Math.cos(phi), tanPhi = Math.tan(phi);
+
+  const N = a / Math.sqrt(1 - e2 * sinPhi * sinPhi);
+  const T = tanPhi * tanPhi;
+  const C = (e2 / (1 - e2)) * cosPhi * cosPhi;
+  const A = cosPhi * (lam - lon0);
+  const A2 = A*A, A3 = A2*A, A4 = A2*A2, A5 = A4*A, A6 = A4*A2;
+
+  const e4 = e2*e2, e6 = e4*e2;
+  const M = a * (
+    (1 - e2/4 - 3*e4/64 - 5*e6/256) * phi
+    - (3*e2/8 + 3*e4/32 + 45*e6/1024) * Math.sin(2*phi)
+    + (15*e4/256 + 45*e6/1024)         * Math.sin(4*phi)
+    - (35*e6/3072)                      * Math.sin(6*phi)
+  );
+
+  const eP2 = e2 / (1 - e2);
+  const x = k0 * N * (A + (1-T+C)*A3/6 + (5-18*T+T*T+72*C-58*eP2)*A5/120) + FE;
+  const y = k0 * (M + N*tanPhi*(A2/2 + (5-T+9*C+4*C*C)*A4/24 + (61-58*T+T*T+600*C-330*eP2)*A6/720));
+
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+// Geocodifica una dirección vía Nominatim (OpenStreetMap) → {lat, lon} WGS84
+async function geocodeNominatim(addr) {
+  try {
+    const q = [addr.nombre_via, addr.numero, addr.municipio, "Canarias", "España"]
+      .filter(Boolean).join(", ");
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
+      { headers: { "User-Agent": "SKEMA/1.0 info@skema.es" }, signal: AbortSignal.timeout(6000) }
+    );
+    const data = await res.json();
+    if (!Array.isArray(data) || !data.length) return null;
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+  } catch { return null; }
 }
 
 // Municipios de Gran Canaria para reconocimiento por nombre
@@ -851,14 +900,31 @@ INSTRUCCIÓN CRÍTICA para cambios:
       const normDebug = { hasAddressHint, addr: addr.tiene_direccion ? addr : null };
 
       if (addr.tiene_direccion) {
-        const parcel = await lookupCatastro(addr);
-        normDebug.catastro = parcel;
+        // Catastro + Nominatim en paralelo; se usan las coordenadas que lleguen primero
+        const [parcel, nominatim] = await Promise.all([
+          lookupCatastro(addr),
+          geocodeNominatim(addr),
+        ]);
+        normDebug.catastro  = parcel;
+        normDebug.nominatim = nominatim;
 
-        if (parcel && parcel.refCatastral) {
-          // Catastro detalle + GRAFCAN planeamiento en paralelo
+        // Coordenadas UTM: prioridad Catastro; fallback Nominatim → UTM
+        let xcen = parcel?.xcen ?? null;
+        let ycen = parcel?.ycen ?? null;
+        if ((!xcen || !ycen) && nominatim) {
+          const utm = wgs84ToUtm28N(nominatim.lat, nominatim.lon);
+          xcen = utm.x;
+          ycen = utm.y;
+          normDebug.coordSource = "nominatim→utm";
+        } else if (xcen && ycen) {
+          normDebug.coordSource = "catastro";
+        }
+
+        if (parcel?.refCatastral) {
+          // Catastro OK — detalle + GRAFCAN en paralelo
           const [detalle, grafcan] = await Promise.all([
             lookupCatastroDetalle(parcel.refCatastral),
-            lookupGrafcan(parcel.xcen, parcel.ycen),
+            lookupGrafcan(xcen, ycen),
           ]);
           normDebug.detalle = detalle;
           normDebug.grafcan = grafcan;
@@ -873,6 +939,13 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
 
           if (grafcan) {
             parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
+          }
+        } else if (xcen && ycen) {
+          // Catastro inaccesible desde Vercel — solo GRAFCAN vía Nominatim
+          const grafcan = await lookupGrafcan(xcen, ycen);
+          normDebug.grafcan = grafcan;
+          if (grafcan) {
+            parcelBlock = `[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
           }
         }
       }

@@ -83,11 +83,12 @@ export default function ChatView() {
 
     // Get or create conversation
     let convId = convIdRef.current;
+    let isNewConv = false;
     if (!convId) {
       const conv = await convsDB.create();
       convId = conv.id;
       convIdRef.current = convId;
-      setCurrentConvId(convId);
+      isNewConv = true;
     }
 
     // Add user message optimistically
@@ -100,6 +101,9 @@ export default function ChatView() {
       messages: withUser,
       ...(messages.length === 0 ? { title: content.slice(0, 50) + (content.length > 50 ? "…" : "") } : {}),
     });
+    // Notify parent of new convId only after DB has the message — prevents useEffect
+    // from re-loading an empty conversation and wiping the optimistic user message.
+    if (isNewConv) setCurrentConvId(convId);
     bump();
     setLoading(true);
 
