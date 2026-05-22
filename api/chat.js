@@ -515,35 +515,31 @@ async function lookupCatastroDetalle(refCatastral) {
   } catch { return null; }
 }
 
-// Consulta calificación urbanística vía SITCAN/IDE Canarias WFS — best effort
-async function lookupSITCAN(xcen, ycen) {
+// Consulta planeamiento urbanístico vía GRAFCAN WMS GetFeatureInfo — toda Canarias
+async function lookupGrafcan(xcen, ycen) {
   if (!xcen || !ycen) return null;
-  const buf  = 10;
+
+  const buf  = 25; // metros — suficiente para centrar la parcela en la imagen 256×256
   const bbox = `${xcen - buf},${ycen - buf},${xcen + buf},${ycen + buf}`;
+  const url  = `https://idecan1.grafcan.es/ServicioWMS/PlanosOrd?SERVICE=WMS&SRS=EPSG:32628&VERSION=1.1.1&REQUEST=GetFeatureInfo&STYLES=&X=128&Y=128&BBOX=${bbox}&WIDTH=256&HEIGHT=256&QUERY_LAYERS=WMS_PlanosOrd&LAYERS=WMS_PlanosOrd&INFO_FORMAT=text/html`;
 
-  // Candidatos: varios endpoints y layer names — probamos hasta encontrar respuesta
-  const candidates = [
-    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:PGOU_CALIFICACION_GC"    },
-    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:CALIFICACION_SUELO_GC"   },
-    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:CLASIFICACION_SUELO_GC"  },
-    { base: "https://visor.sitcan.es/sitcan/ows",          layer: "SITCAN:PLANEAMIENTO_GC"         },
-    { base: "https://idecan2.grafcan.es/ServicioWFS/wfs",  layer: "GC_PGOU:Calificacion_Suelo"     },
-    { base: "https://idecan2.grafcan.es/ServicioWFS/wfs",  layer: "GC:Calificacion_Suelo"          },
-    { base: "https://idecan1.grafcan.es/ServicioWFS/wfs",  layer: "GC_PGOU:Calificacion_Suelo"     },
-  ];
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const html = await res.text();
 
-  for (const { base, layer } of candidates) {
-    try {
-      const url = `${base}?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=${encodeURIComponent(layer)}&SRSNAME=EPSG:32628&BBOX=${bbox},EPSG:32628&outputFormat=application%2Fjson`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (json.features?.length > 0) {
-        return { layer, props: json.features[0].properties };
-      }
-    } catch { continue; }
-  }
-  return null;
+    // Extraer texto limpio del HTML
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/\s+/g, " ").trim();
+
+    if (!text || text.length < 30) return null;
+    return { text };
+  } catch { return null; }
 }
 
 // ── Intent detection (structured tasks) ───────────────────────────────────────
@@ -859,13 +855,13 @@ INSTRUCCIÓN CRÍTICA para cambios:
         normDebug.catastro = parcel;
 
         if (parcel && parcel.refCatastral) {
-          // Fetch parcel detail and SITCAN in parallel
-          const [detalle, zoning] = await Promise.all([
+          // Catastro detalle + GRAFCAN planeamiento en paralelo
+          const [detalle, grafcan] = await Promise.all([
             lookupCatastroDetalle(parcel.refCatastral),
-            lookupSITCAN(parcel.xcen, parcel.ycen),
+            lookupGrafcan(parcel.xcen, parcel.ycen),
           ]);
           normDebug.detalle = detalle;
-          normDebug.sitcan  = zoning;
+          normDebug.grafcan = grafcan;
 
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
 Referencia catastral: ${parcel.refCatastral}
@@ -875,12 +871,8 @@ Superficie suelo: ${detalle.supSuelo ? detalle.supSuelo + " m²" : "–"}
 Superficie construida: ${detalle.supConst ? detalle.supConst + " m²" : "–"}` : ""}
 Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${parcel.refCatastral}`;
 
-          if (zoning) {
-            const props = Object.entries(zoning.props)
-              .filter(([, v]) => v !== null && v !== "")
-              .map(([k, v]) => `  ${k}: ${v}`)
-              .join("\n");
-            parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — SITCAN (${zoning.layer})]\n${props}`;
+          if (grafcan) {
+            parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
           }
         }
       }
