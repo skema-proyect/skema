@@ -552,24 +552,59 @@ async function lookupCatastroWebByAddress(addr) {
   } catch (e) { return { _err: e.message }; }
 }
 
-// Búsqueda por coordenadas — solo como último recurso (imprecisa, puede coger parcela vecina)
+// Búsqueda por coordenadas — último recurso. Cuando encuentra la referencia,
+// usa la misma sesión HTTP para obtener el detalle en OVCConCiud.
 async function lookupCatastroWeb(lat, lon) {
+  const WEB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "es-ES,es;q=0.9",
+  };
+
   const tryPoint = async (la, lo) => {
     try {
       const { x, y } = wgs84ToWebMercator(la, lo);
-      const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?origen=Carto&huso=3857&x=${x}&y=${y}`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept": "text/html,application/xhtml+xml",
-          "Accept-Language": "es-ES,es;q=0.9",
-        },
+      const listUrl = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?origen=Carto&huso=3857&x=${x}&y=${y}`;
+      const listRes = await fetch(listUrl, {
+        headers: WEB_HEADERS,
         signal: AbortSignal.timeout(10000),
         redirect: "follow",
       });
-      if (!res.ok) return { _err: `HTTP ${res.status}` };
-      const html = await res.text();
-      return parseListaBienesHtml(html, res.url ?? url);
+      if (!listRes.ok) return { _err: `HTTP ${listRes.status}` };
+      const listHtml = await listRes.text();
+
+      const parsed = parseListaBienesHtml(listHtml, listRes.url ?? listUrl);
+      if (!parsed?.refCatastral) return parsed;
+
+      // Usar la cookie de sesión de OVCListaBienes para OVCConCiud (evita OVCErrorDatos)
+      const sessionCookie = listRes.headers.get("set-cookie")?.split(";")[0] ?? "";
+      const detailUrl = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${parsed.refCatastral}`;
+      try {
+        const detailRes = await fetch(detailUrl, {
+          headers: { ...WEB_HEADERS, "Referer": listUrl, ...(sessionCookie ? { "Cookie": sessionCookie } : {}) },
+          signal: AbortSignal.timeout(8000),
+          redirect: "follow",
+        });
+        if (detailRes.ok) {
+          const dHtml = await detailRes.text();
+          if (!dHtml.includes("OVCErrorDatos")) {
+            const supSueloMatch =
+              dHtml.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+              dHtml.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
+              dHtml.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i);
+            const supConstMatch = dHtml.match(/[Ss]up(?:erficie)?\s*[Cc]onstrui[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is);
+            const usoMatch = dHtml.match(/[Uu]so[^<]{0,50}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+            return {
+              ...parsed,
+              supSuelo:  supSueloMatch?.[1]?.replace(",", ".") ?? null,
+              supConst:  supConstMatch?.[1]?.replace(",", ".") ?? null,
+              uso:       usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null,
+            };
+          }
+        }
+      } catch { /* continuar sin detalle */ }
+
+      return parsed; // referencia encontrada, sin detalle
     } catch (e) { return { _err: e.message }; }
   };
 
@@ -610,12 +645,17 @@ async function geocodeGoogle(addr) {
       }
       return null;
     };
-    // En España: level_4 = municipio, level_2 = provincia
-    const municipioRaw = get("administrative_area_level_4", "administrative_area_level_3");
+    // En España la jerarquía varía por región — probar todos los niveles
+    const municipioRaw = get(
+      "administrative_area_level_4",
+      "administrative_area_level_5",
+      "administrative_area_level_3",
+    );
     return {
       lat,
       lon: lng,
       municipioOficial: municipioRaw ? normCatastro(municipioRaw) : null,
+      _components: comps.map(c => ({ name: c.long_name, types: c.types })), // debug
       _source: "google",
     };
   } catch (e) { return { _err: e.message }; }
@@ -1428,26 +1468,7 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
           normDebug.grafcan = grafcan;
           normDebug.entorno = entorno;
 
-          // Si la referencia vino de scraping por coordenadas y OVCConCiud devuelve error,
-          // la referencia es de una parcela vecina incorrecta — descartarla
-          const detalleEsError = detalle?._err === "sin_datos_en_OVCConCiud";
-          if (detalleEsError && catastro._source === "catastro-web") {
-            normDebug.refDescartada = catastro.refCatastral;
-            // Caer al bloque "sin datos" pasando por el código de abajo
-            const [grafcanFallback, entornoFallback] = await Promise.all([
-              (xcen && ycen) ? lookupGrafcan(xcen, ycen) : Promise.resolve(grafcan),
-              Promise.resolve(entorno),
-            ]);
-            normDebug.grafcan = grafcanFallback ?? grafcan;
-            parcelBlock = `[AVISO SISTEMA — SIN DATOS CATASTRALES]\nNo se pudo obtener referencia catastral válida para esta dirección.\nREGLA CRÍTICA: NO inventes metros cuadrados, referencia catastral ni ningún dato físico de la parcela.\nIndica al usuario que no se pudo consultar Catastro y ofrece este link para consulta manual:\nhttps://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
-            if (grafcanFallback ?? grafcan) {
-              parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${(grafcanFallback ?? grafcan).text}`;
-            }
-            if (entorno) {
-              parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)`;
-            }
-          } else {
-
+          {
           const uso       = detalle?.uso      ?? null;
           const supSuelo  = detalle?.supSuelo ?? null;
           const supConst  = detalle?.supConst ?? null;
@@ -1463,7 +1484,7 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
           if (entorno) {
             parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m, misma calle/manzana]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)\nReferencia para parcelas de superficie similar (~${supSuelo ?? "?"} m²): interpretar en función de tipología dominante en la trama.`;
           }
-          } // cierre else (referencia válida)
+          } // cierre bloque datos catastrales
 
         } else {
           // Sin referencia catastral tras todos los intentos
