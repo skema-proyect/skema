@@ -485,7 +485,9 @@ async function lookupCatastroWeb(lat, lon) {
 
     if (!refCatastral) {
       // Guardar fragmento de HTML para debug
-      return { _err: "refCatastral no encontrada", _html: html.slice(0, 3000) };
+      const bodyStart = html.toLowerCase().indexOf("<body");
+      const bodyHtml = bodyStart >= 0 ? html.slice(bodyStart, bodyStart + 3000) : html.slice(-3000);
+      return { _err: "refCatastral no encontrada", _html: bodyHtml };
     }
 
     // ── Dirección ───────────────────────────────────────────────────────────────
@@ -526,12 +528,20 @@ async function geocodeNominatim(addr) {
     const q = [addr.nombre_via, addr.numero, addr.municipio, "Canarias", "España"]
       .filter(Boolean).join(", ");
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(q)}`,
       { headers: { "User-Agent": "SKEMA/1.0 info@skema.es" }, signal: AbortSignal.timeout(6000) }
     );
     const data = await res.json();
     if (!Array.isArray(data) || !data.length) return null;
-    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+    const item = data[0];
+    const a = item.address ?? {};
+    // Municipio oficial del registro administrativo de OSM (no el barrio/pedanía)
+    const municipioOficial = a.city ?? a.town ?? a.municipality ?? a.county ?? null;
+    return {
+      lat: parseFloat(item.lat),
+      lon: parseFloat(item.lon),
+      municipioOficial: municipioOficial ? normCatastro(municipioOficial) : null,
+    };
   } catch { return null; }
 }
 
@@ -811,6 +821,36 @@ async function lookupOverpass(lat, lon, radius = 150) {
 }
 
 // Consulta planeamiento urbanístico vía GRAFCAN WMS GetFeatureInfo — toda Canarias
+// Consulta WFS de IDECanarias (GRAFCAN) para obtener referencia catastral por coordenadas UTM
+// Accesible desde Frankfurt — no usa ovc.catastro.meh.es
+async function lookupGrafcanParcel(lat, lon) {
+  try {
+    const utm = wgs84ToUtm28N(lat, lon);
+    const buf = 20;
+    const bbox = `${utm.x - buf},${utm.y - buf},${utm.x + buf},${utm.y + buf},EPSG:32628`;
+    const url = `https://idecan1.grafcan.es/ServicioWFS/DistribucionCP?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=CP:CadastralParcel&COUNT=3&SRSNAME=EPSG:32628&BBOX=${bbox}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "SKEMA/1.0 info@skema.es", "Accept": "application/xml,text/xml,*/*" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { _err: `HTTP ${res.status}` };
+    const xml = await res.text();
+
+    // Intentar extraer referencia catastral con varios nombres de campo posibles
+    const refCatastral =
+      xml.match(/<(?:CP:nationalCadastralReference|nationalCadastralReference)>([^<]{14,20})<\//)?.[1]?.trim() ??
+      xml.match(/<(?:refe_catas|REFE_CATAS|REFCATP|REFERENCIA_CATASTRAL)>([A-Z0-9]{14,20})<\//i)?.[1]?.trim() ??
+      xml.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ??
+      null;
+
+    const areaMatch = xml.match(/<(?:CP:)?areaValue[^>]*>(\d[\d.]*)<\//);
+    const supSuelo = areaMatch ? Math.round(parseFloat(areaMatch[1])).toString() : null;
+
+    if (!refCatastral) return { _err: "sin_resultado_wfs_grafcan", _xml: xml.slice(0, 600) };
+    return { refCatastral, supSuelo, _source: "grafcan-wfs" };
+  } catch (e) { return { _err: e.message }; }
+}
+
 async function lookupGrafcan(xcen, ycen) {
   if (!xcen || !ycen) return null;
 
@@ -1206,22 +1246,40 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
         // Fallback chain cuando el REST por dirección no devuelve referencia
         let catastro = parcel;
 
+        // 0º: Reintentar con municipio oficial de Nominatim si difiere del extraído
+        if (!catastro?.refCatastral && nominatim?.municipioOficial) {
+          const munExtraido = normCatastro(addr.municipio ?? "");
+          if (munExtraido !== nominatim.municipioOficial) {
+            const addrFixed = { ...addr, municipio: nominatim.municipioOficial };
+            const parcelRetry = await lookupCatastro(addrFixed);
+            normDebug.catastroMunicipioFix = parcelRetry;
+            if (parcelRetry?.refCatastral) catastro = parcelRetry;
+          }
+        }
+
         if (!catastro?.refCatastral && nominatim) {
-          // 1º: INSPIRE WFS — API oficial, path distinto, puede estar menos bloqueado
+          // 1º: GRAFCAN WFS (IDECanarias) — accesible desde Frankfurt, no usa ovc.catastro.meh.es
+          const grafcanParcel = await lookupGrafcanParcel(nominatim.lat, nominatim.lon);
+          normDebug.grafcanParcel = grafcanParcel;
+          if (grafcanParcel?.refCatastral) catastro = grafcanParcel;
+        }
+
+        if (!catastro?.refCatastral && nominatim) {
+          // 2º: INSPIRE WFS oficial — puede estar bloqueado pero lo intentamos
           const wfs = await lookupCatastroWFS(nominatim.lat, nominatim.lon);
           normDebug.wfs = wfs;
           if (wfs?.refCatastral) catastro = wfs;
         }
 
         if (!catastro?.refCatastral && nominatim) {
-          // 2º: REST Consulta_RCCOOR por coordenadas
+          // 3º: REST Consulta_RCCOOR por coordenadas (multi-punto)
           const byCoords = await lookupCatastroByCoords(nominatim.lat, nominatim.lon);
           normDebug.catastroByCoords = byCoords;
           if (byCoords?.refCatastral) catastro = byCoords;
         }
 
         if (!catastro?.refCatastral && nominatim) {
-          // 3º: scraping OVCListaBienes.aspx (www1.sedecatastro.gob.es — funciona desde Frankfurt)
+          // 4º: scraping OVCListaBienes.aspx (www1.sedecatastro.gob.es)
           const webData = await lookupCatastroWeb(nominatim.lat, nominatim.lon);
           normDebug.catastroWeb = webData;
           if (webData?.refCatastral) catastro = webData;
