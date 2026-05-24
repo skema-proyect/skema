@@ -485,7 +485,7 @@ async function lookupCatastroWeb(lat, lon) {
 
     if (!refCatastral) {
       // Guardar fragmento de HTML para debug
-      return { _err: "refCatastral no encontrada", _html: html.slice(0, 500) };
+      return { _err: "refCatastral no encontrada", _html: html.slice(0, 3000) };
     }
 
     // ── Dirección ───────────────────────────────────────────────────────────────
@@ -647,27 +647,37 @@ async function lookupCatastro(addr) {
   } catch (e) { return { _err: e.message }; }
 }
 
-// Consulta Catastro por coordenadas WGS84 → referencia catastral + coords UTM
+// Consulta Catastro por coordenadas WGS84 — prueba 5 puntos en paralelo para cubrir
+// el caso en que Nominatim devuelva un punto en la calle (sin parcela) en vez de la parcela
 async function lookupCatastroByCoords(lat, lon) {
-  try {
-    const res = await fetch(
-      `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/REST/OVCCallejero.svc/Consulta_RCCOOR?SRS=EPSG:4258&Coordenada_X=${lon}&Coordenada_Y=${lat}`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    const xml = await res.text();
-    const pc1 = xml.match(/<pc1>([^<]+)<\/pc1>/)?.[1]?.trim();
-    const pc2 = xml.match(/<pc2>([^<]+)<\/pc2>/)?.[1]?.trim();
-    if (!pc1) return { _err: xml.match(/<err>([^<]*)<\/err>/)?.[1]?.trim() ?? "sin_resultado" };
-    const xcen = parseFloat(xml.match(/<xcen>([^<]+)<\/xcen>/)?.[1] ?? "NaN");
-    const ycen = parseFloat(xml.match(/<ycen>([^<]+)<\/ycen>/)?.[1] ?? "NaN");
-    const ldt  = xml.match(/<ldt>([^<]+)<\/ldt>/)?.[1]?.trim() ?? "";
-    return {
-      refCatastral: pc1 + pc2,
-      xcen: isNaN(xcen) ? null : xcen,
-      ycen: isNaN(ycen) ? null : ycen,
-      direccion: ldt,
-    };
-  } catch (e) { return { _err: e.message }; }
+  const d = 0.00014; // ~15m — suficiente para pasar de la acera a la parcela
+  const points = [
+    [lat,   lon  ],  // punto original
+    [lat+d, lon  ],  // norte
+    [lat-d, lon  ],  // sur
+    [lat,   lon+d],  // este
+    [lat,   lon-d],  // oeste
+  ];
+
+  const tryPoint = async (la, lo) => {
+    try {
+      const res = await fetch(
+        `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/REST/OVCCallejero.svc/Consulta_RCCOOR?SRS=EPSG:4258&Coordenada_X=${lo}&Coordenada_Y=${la}`,
+        { signal: AbortSignal.timeout(8000) }
+      );
+      const xml = await res.text();
+      const pc1 = xml.match(/<pc1>([^<]+)<\/pc1>/)?.[1]?.trim();
+      const pc2 = xml.match(/<pc2>([^<]+)<\/pc2>/)?.[1]?.trim();
+      if (!pc1) return null;
+      const xcen = parseFloat(xml.match(/<xcen>([^<]+)<\/xcen>/)?.[1] ?? "NaN");
+      const ycen = parseFloat(xml.match(/<ycen>([^<]+)<\/ycen>/)?.[1] ?? "NaN");
+      const ldt  = xml.match(/<ldt>([^<]+)<\/ldt>/)?.[1]?.trim() ?? "";
+      return { refCatastral: pc1+pc2, xcen: isNaN(xcen)?null:xcen, ycen: isNaN(ycen)?null:ycen, direccion: ldt };
+    } catch { return null; }
+  };
+
+  const results = await Promise.all(points.map(([la, lo]) => tryPoint(la, lo)));
+  return results.find(r => r?.refCatastral) ?? { _err: "sin_resultado" };
 }
 
 // Consulta detalle de parcela por referencia catastral (uso, superficie)
@@ -689,8 +699,9 @@ async function lookupCatastroDetalle(refCatastral) {
 // Devuelve referencia catastral (14 chars) + m² suelo directamente en GML estructurado
 async function lookupCatastroWFS(lat, lon) {
   try {
-    const d = 0.00025; // ~27m a latitud 28° — caja mínima para encontrar la parcela puntual
-    const bbox = `${(lon-d).toFixed(6)},${(lat-d).toFixed(6)},${(lon+d).toFixed(6)},${(lat+d).toFixed(6)},EPSG:4326`;
+    const d = 0.00025; // ~27m a latitud 28°
+    // EPSG:4326 en WFS 2.0 tiene orden lat,lon (no lon,lat) — error anterior causaba búsqueda en el Índico
+    const bbox = `${(lat-d).toFixed(6)},${(lon-d).toFixed(6)},${(lat+d).toFixed(6)},${(lon+d).toFixed(6)},EPSG:4326`;
     const url = `https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=CP:CadastralParcel&COUNT=3&SRSNAME=EPSG:4326&BBOX=${bbox}`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
