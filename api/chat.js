@@ -54,7 +54,8 @@ FORMATO DE RESPUESTA OBLIGATORIO cuando hay consulta sobre parcela:
 Usa exactamente estas cuatro secciones, en este orden:
 
 **📍 Parcela**
-Referencia catastral · m² suelo · m² construido · uso catastral · enlace ficha
+Referencia catastral · m² suelo · m² construido · uso catastral
+[Ver ficha en Catastro](enlace del campo "Enlace ficha" si está disponible) — muéstralo siempre como link clicable
 
 **🏗️ Estimación urbanística** ⚠️ *No oficial*
 Zona según PGOU · número de plantas · altura máxima · edificabilidad orientativa
@@ -479,9 +480,12 @@ async function lookupCatastroWeb(lat, lon) {
     const usoMatch = html.match(/[Uu]so\s*(?:catastral)?[^<]{0,30}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
     const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    // Superficie suelo — primer número seguido de m² o m2
-    const supMatches = [...html.matchAll(/(\d[\d.,]*)\s*m[²2]/gi)];
-    const supSuelo = supMatches.length > 0 ? supMatches[0][1].replace(",", ".") : null;
+    // Superficie suelo — busca específicamente el campo "suelo" para evitar coger "construido"
+    const supSueloMatch =
+      html.match(/[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,60}?[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo/is) ||
+      html.match(/id="[^"]*[Ss]uperficie[Ss]uelo[^"]*"[^>]*>(\d[\d.,]+)/i);
+    const supSuelo = supSueloMatch ? supSueloMatch[1].replace(",", ".") : null;
 
     // Coords UTM en la página (Catastro las incluye a veces en atributos data o meta)
     const xcenMatch = html.match(/xcen[^0-9]{0,10}([4-6]\d{5}(?:\.\d+)?)/i);
@@ -1058,6 +1062,9 @@ INSTRUCCIÓN CRÍTICA para cambios:
 
     // ── Normativa ──
     if (intent === "normativa") {
+      // Detectar referencia catastral directa en el mensaje (patrón único de 20 chars)
+      const refCatastralDirecta = lastUser.content.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ?? null;
+
       // Check if message likely contains a street address (avoid extra Haiku call otherwise)
       const hasAddressHint = /\b(calle|avda?\.?|avenida|camino|carretera|plaza|c\/|nº|num|número|\bno\b\.?\s*\d|polígono|urb\.?|urbanización)\b|\d{1,4}[,\s]/i.test(lastUser.content);
 
@@ -1069,7 +1076,21 @@ INSTRUCCIÓN CRÍTICA para cambios:
 
       // Catastro → SITCAN (sequential, each needs the previous result)
       let parcelBlock = "";
-      const normDebug = { hasAddressHint, addr: addr.tiene_direccion ? addr : null };
+      const normDebug = { hasAddressHint, refCatastralDirecta, addr: addr.tiene_direccion ? addr : null };
+
+      // Si el usuario escribió una referencia catastral directamente, buscarla en Catastro
+      if (refCatastralDirecta && !addr.tiene_direccion) {
+        const [detalle, grafcan] = await Promise.all([
+          lookupCatastroDetalle(refCatastralDirecta),
+          Promise.resolve(null), // sin coords no podemos llamar a GRAFCAN ni Overpass
+        ]);
+        normDebug.detalleDirecto = detalle;
+        if (detalle) {
+          parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
+Referencia catastral: ${refCatastralDirecta}${detalle.uso ? `\nUso catastral: ${detalle.uso}` : ""}${detalle.supSuelo ? `\nSuperficie suelo: ${detalle.supSuelo} m²` : ""}${detalle.supConst ? `\nSuperficie construida: ${detalle.supConst} m²` : ""}
+Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${refCatastralDirecta}`;
+        }
+      }
 
       if (addr.tiene_direccion) {
         // Catastro + Nominatim en paralelo; se usan las coordenadas que lleguen primero
