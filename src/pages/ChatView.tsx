@@ -116,6 +116,7 @@ export default function ChatView() {
         body: JSON.stringify({
           messages: history,
           projectInstructions: projectInstructions ?? undefined,
+          userInstructions: profile?.instructions ?? undefined,
           today: new Date().toISOString().split("T")[0],
         }),
       });

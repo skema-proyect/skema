@@ -4,11 +4,12 @@ import {
   Plus, ChevronDown, ChevronRight,
   MessageSquare, FolderOpen, Trash2,
   StickyNote, Calendar, PenLine, X, Download,
-  LogOut, ShieldCheck, FolderInput,
+  ShieldCheck, FolderInput,
 } from "lucide-react";
 import { projects as projectsDB, conversations as convsDB } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
+import UserPanel, { getInitials } from "./UserPanel";
 import type { Project, Conversation } from "@/types";
 
 interface Props {
@@ -23,7 +24,8 @@ interface Props {
 export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServiceSelect, onClose, refresh }: Props) {
   const navigate  = useNavigate();
   const location  = useLocation();
-  const { profile, signOut } = useAuth();
+  const { profile } = useAuth();
+  const [showPanel, setShowPanel] = useState(false);
 
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [allConvs,    setAllConvs]    = useState<Conversation[]>([]);
@@ -110,11 +112,22 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         >
           <img src="/logo-skema.png" alt="SKEMA" className="h-6 w-auto" style={{ filter: "invert(1)" }} />
         </button>
-        {onClose && (
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted lg:hidden">
-            <X size={17} />
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {profile && (
+            <button
+              onClick={() => setShowPanel(true)}
+              title="Mi perfil"
+              className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-[11px] font-semibold hover:opacity-80 transition-opacity select-none flex-shrink-0"
+            >
+              {getInitials(profile.name, profile.email)}
+            </button>
+          )}
+          {onClose && (
+            <button onClick={onClose} className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted lg:hidden">
+              <X size={17} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Servicios rápidos */}
@@ -243,22 +256,9 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
             <Download size={16} /> Instalar app
           </button>
         )}
-
-        {/* User + logout */}
-        <div className="flex items-center justify-between px-2 pt-2 mt-1 border-t border-s-sidebar-border">
-          <div className="min-w-0">
-            <p className="text-[12px] text-s-sidebar-text truncate">{profile?.name ?? profile?.email ?? ""}</p>
-            <p className="text-[11px] text-s-sidebar-muted">SKEMA v0.1</p>
-          </div>
-          <button
-            onClick={signOut}
-            className="p-1.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted hover:text-s-sidebar-text transition-colors flex-shrink-0"
-            title="Cerrar sesión"
-          >
-            <LogOut size={14} />
-          </button>
-        </div>
       </div>
+
+      {showPanel && <UserPanel onClose={() => setShowPanel(false)} />}
 
       {/* FAB — Nuevo chat */}
       <button

@@ -7,6 +7,7 @@ export interface Profile {
   email: string;
   name: string | null;
   role: "user" | "admin";
+  instructions: string | null;
 }
 
 interface AuthCtx {
@@ -14,10 +15,12 @@ interface AuthCtx {
   profile: Profile | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthCtx>({
-  user: null, profile: null, loading: true, signOut: async () => {},
+  user: null, profile: null, loading: true,
+  signOut: async () => {}, refreshProfile: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -43,8 +46,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadProfile = async (userId: string) => {
     const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
-    setProfile(data ? { id: data.id, email: data.email, name: data.name, role: data.role } : null);
+    setProfile(data ? {
+      id: data.id, email: data.email, name: data.name, role: data.role,
+      instructions: data.instructions ?? null,
+    } : null);
     setLoading(false);
+  };
+
+  const refreshProfile = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) await loadProfile(session.user.id);
   };
 
   const signOut = async () => {
@@ -52,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

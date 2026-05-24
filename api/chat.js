@@ -1180,9 +1180,12 @@ function selectModel(message) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [], projectInstructions, today } = req.body;
+  const { messages = [], projectInstructions, userInstructions, today } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
 
+  const userContext = userInstructions?.trim()
+    ? `\n\nINSTRUCCIONES PERSONALES DEL USUARIO:\n${userInstructions.trim()}`
+    : "";
   const projectContext = projectInstructions?.trim()
     ? `\n\nCONTEXTO DEL PROYECTO:\n${projectInstructions.trim()}`
     : "";
@@ -1348,7 +1351,7 @@ Si no hay contenido suficiente:
       if (hasExistingPlan && !GENERATE_TRIGGER.test(lastUser.content)) {
         const discussMsg = await client.messages.create({
           model: MODELS.smart, max_tokens: 500,
-          system: SKETCH_CHAT_SYSTEM + projectContext,
+          system: SKETCH_CHAT_SYSTEM + userContext + projectContext,
           messages: cleanHistory,
         });
         const discussText = discussMsg.content[0]?.text ?? "";
@@ -1599,6 +1602,7 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
       const system = [
         dbContext ? `${NORMATIVA_SYSTEM}\n\n${dbContext}` : NORMATIVA_SYSTEM,
         parcelBlock ? `\n\n${parcelBlock}` : "",
+        userContext,
         projectContext,
       ].join("");
 
@@ -1613,7 +1617,7 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     if (intent === "document") {
       const msg = await client.messages.create({
         model: MODELS.smart, max_tokens: 6000,
-        system: DOCUMENT_SYSTEM + projectContext, messages: history,
+        system: DOCUMENT_SYSTEM + userContext + projectContext, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
     }
@@ -1632,7 +1636,7 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     const model = selectModel(lastUser.content);
     const msg   = await client.messages.create({
       model, max_tokens: 1500,
-      system: SYSTEM + projectContext + agendaHistoryNote, messages: history,
+      system: SYSTEM + userContext + projectContext + agendaHistoryNote, messages: history,
     });
     return res.json({ content: msg.content[0]?.text ?? "", tool: "chat", model, _debug });
 
