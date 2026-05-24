@@ -668,6 +668,36 @@ async function lookupCatastroDetalle(refCatastral) {
   } catch { return null; }
 }
 
+// INSPIRE WFS del Catastro — API oficial para desarrolladores, distinto path al REST bloqueado
+// Devuelve referencia catastral (14 chars) + m² suelo directamente en GML estructurado
+async function lookupCatastroWFS(lat, lon) {
+  try {
+    const d = 0.00025; // ~27m a latitud 28° — caja mínima para encontrar la parcela puntual
+    const bbox = `${(lon-d).toFixed(6)},${(lat-d).toFixed(6)},${(lon+d).toFixed(6)},${(lat+d).toFixed(6)},EPSG:4326`;
+    const url = `https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=CP:CadastralParcel&COUNT=3&SRSNAME=EPSG:4326&BBOX=${bbox}`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return { _err: `HTTP ${res.status}` };
+    const xml = await res.text();
+
+    if (xml.includes("ExceptionReport") || xml.includes("ExceptionText")) {
+      const msg = xml.match(/<[^:]*ExceptionText>([^<]+)</)?.[1] ?? "WFS exception";
+      return { _err: msg };
+    }
+
+    // nationalCadastralReference = referencia de parcela (14 chars, sin código de unidad)
+    const refMatch = xml.match(/<CP:nationalCadastralReference>([^<]+)<\/CP:nationalCadastralReference>/);
+    if (!refMatch) return { _err: "sin_resultado_wfs" };
+    const refCatastral = refMatch[1].trim();
+
+    // areaValue = superficie suelo en m²
+    const areaMatch = xml.match(/<CP:areaValue[^>]*>([^<]+)<\/CP:areaValue>/);
+    const supSuelo = areaMatch ? String(Math.round(parseFloat(areaMatch[1]))) : null;
+
+    return { refCatastral, supSuelo, _source: "wfs-inspire" };
+  } catch (e) { return { _err: e.message }; }
+}
+
 // Detalle por referencia catastral vía scraping OVCConCiud.aspx (fallback si REST bloqueado)
 async function lookupCatastroDetalleWeb(refCatastral) {
   try {
@@ -1142,16 +1172,25 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
         normDebug.catastro  = parcel;
         normDebug.nominatim = nominatim;
 
-        // Si Catastro por dirección falló pero tenemos coords de Nominatim → intentar por coords (REST)
+        // Fallback chain cuando el REST por dirección no devuelve referencia
         let catastro = parcel;
-        if (!parcel?.refCatastral && nominatim) {
+
+        if (!catastro?.refCatastral && nominatim) {
+          // 1º: INSPIRE WFS — API oficial, path distinto, puede estar menos bloqueado
+          const wfs = await lookupCatastroWFS(nominatim.lat, nominatim.lon);
+          normDebug.wfs = wfs;
+          if (wfs?.refCatastral) catastro = wfs;
+        }
+
+        if (!catastro?.refCatastral && nominatim) {
+          // 2º: REST Consulta_RCCOOR por coordenadas
           const byCoords = await lookupCatastroByCoords(nominatim.lat, nominatim.lon);
           normDebug.catastroByCoords = byCoords;
           if (byCoords?.refCatastral) catastro = byCoords;
         }
 
-        // Si la API REST sigue bloqueada, intentar scraping de www1.sedecatastro.gob.es
         if (!catastro?.refCatastral && nominatim) {
+          // 3º: scraping OVCListaBienes.aspx (www1.sedecatastro.gob.es — funciona desde Frankfurt)
           const webData = await lookupCatastroWeb(nominatim.lat, nominatim.lon);
           normDebug.catastroWeb = webData;
           if (webData?.refCatastral) catastro = webData;
@@ -1171,19 +1210,19 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
 
         if (catastro?.refCatastral) {
           // Tenemos referencia catastral — detalle + GRAFCAN + Overpass en paralelo
-          // Si el scraping web ya trajo uso/supSuelo lo usamos; si no, intentar REST y luego OVCConCiud
-          const webUsoCached = catastro._source === "catastro-web" ? catastro : null;
+          // Si el WFS o el scraping ya trajeron supSuelo no necesitamos Consulta_DNPPP
+          const alreadyHasSup = catastro.supSuelo != null;
           const [detalleRest, grafcan, entorno] = await Promise.all([
-            webUsoCached ? Promise.resolve(null) : lookupCatastroDetalle(catastro.refCatastral),
+            alreadyHasSup ? Promise.resolve(null) : lookupCatastroDetalle(catastro.refCatastral),
             lookupGrafcan(xcen, ycen),
             nominatim ? lookupOverpass(nominatim.lat, nominatim.lon) : Promise.resolve(null),
           ]);
-          // Si REST falló y no tenemos datos web, intentar scraping OVCConCiud
+          // Si REST falló y no tenemos m², intentar scraping OVCConCiud
           let detalleWeb = null;
-          if (!detalleRest && !webUsoCached?.supSuelo) {
+          if (!detalleRest && !alreadyHasSup) {
             detalleWeb = await lookupCatastroDetalleWeb(catastro.refCatastral);
           }
-          const detalle = detalleRest ?? detalleWeb ?? webUsoCached;
+          const detalle = detalleRest ?? detalleWeb ?? (alreadyHasSup ? catastro : null);
           normDebug.detalle = detalle;
           normDebug.grafcan = grafcan;
           normDebug.entorno = entorno;
