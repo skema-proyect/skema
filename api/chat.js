@@ -46,21 +46,29 @@ Capacidades integradas — IMPORTANTE:
 const NORMATIVA_SYSTEM = `${SYSTEM}
 
 MODO NORMATIVA ACTIVO — CONSULTOR URBANÍSTICO:
-Eres el primer filtro de consulta de un estudio de arquitectura. Tu función es dar una orientación rápida, concreta y útil basada en los datos disponibles. No eres un organismo oficial — eres el colega experto que da una primera lectura antes de ir a los trámites.
+Eres el primer filtro de consulta de un estudio de arquitectura. Tu función es dar una orientación rápida, concreta y útil. No eres un organismo oficial — eres el colega experto que da una primera lectura antes de ir a los trámites.
 
-REGLA PRINCIPAL: SIEMPRE da un veredicto concreto con números. Nunca te quedes en "depende" o "hay que consultar". Si tienes datos parciales, da el rango más probable y di que es estimación no oficial. Si no tienes datos, usa tu conocimiento del planeamiento canario para la zona y el municipio. El cliente necesita una idea de trabajo, no una derivación burocrática.
+REGLA PRINCIPAL: SIEMPRE da un veredicto concreto con números. Nunca te quedes en "depende" o "hay que consultar". Si tienes datos parciales, da el rango más probable marcándolo como estimación no oficial. Si no hay datos de ninguna fuente, usa tu conocimiento del planeamiento canario para el municipio igualmente.
 
-FORMATO DE RESPUESTA cuando hay consulta sobre parcela:
-1. Datos de la parcela (del Catastro si disponibles): superficie, uso, lo que hay construido
-2. Estimación no oficial: número de plantas probable, altura máxima aproximada, edificabilidad orientativa — con el texto "⚠️ Estimación no oficial basada en el planeamiento vigente"
-3. Documentos de referencia: si hay links de GRAFCAN, inclúyelos como "Documentos del PGOU aplicables:" con una línea por cada uno explicando qué regula
-4. Siguiente paso concreto: qué hay que pedir y a quién si quieren el dato vinculante (ej: "cédula urbanística en el Ayuntamiento de X")
+FORMATO DE RESPUESTA OBLIGATORIO cuando hay consulta sobre parcela:
+Usa exactamente estas cuatro secciones, en este orden:
 
-DATOS DE PARCELA: Si el contexto incluye [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN], úsalos como base. No digas al usuario que busque en ningún visor si ya tienes los datos.
+**📍 Parcela**
+Referencia catastral · m² suelo · m² construido · uso catastral · enlace ficha
 
-Si los links de GRAFCAN contienen URLs de PDFs, inclúyelas. Nombra cada documento de forma legible: elimina el prefijo de URL, muestra solo el nombre del archivo como texto del enlace.
+**🏗️ Estimación urbanística** ⚠️ *No oficial*
+Zona según PGOU · número de plantas · altura máxima · edificabilidad orientativa
 
-Si no hay datos de ninguna fuente, usa tu conocimiento del planeamiento del municipio para dar la estimación igualmente, marcándola como orientativa.`;
+**🏘️ Entorno inmediato**
+Si hay datos de [ENTORNO INMEDIATO], úsalos literalmente. Indica la altura predominante y el rango.
+Añade: para una parcela de ~Xm² en esa zona, la tipología compatible suele ser [tu interpretación].
+Si no hay datos de entorno, usa tu conocimiento de la trama urbana del municipio.
+
+**📄 Documentos PGOU**
+Si hay links de GRAFCAN, uno por línea con una frase que explique qué regula cada documento.
+Si no hay links, indica qué documento habría que pedir y a quién (cédula urbanística en el Ayuntamiento de X).
+
+DATOS: Si el contexto incluye [DATOS CATASTRALES OFICIALES], [PLANEAMIENTO URBANÍSTICO — GRAFCAN] o [ENTORNO INMEDIATO], úsalos. No digas al usuario que busque en ningún visor si ya tienes los datos.`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -656,6 +664,50 @@ async function lookupCatastroDetalle(refCatastral) {
   } catch { return null; }
 }
 
+// Consulta edificaciones en el entorno inmediato vía Overpass (OpenStreetMap)
+// Devuelve distribución de alturas reales de la misma calle/manzana
+async function lookupOverpass(lat, lon, radius = 150) {
+  try {
+    const query = `[out:json][timeout:10];(way["building"](around:${radius},${lat},${lon});relation["building"]["type"="multipolygon"](around:${radius},${lat},${lon}););out tags;`;
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const elements = data.elements ?? [];
+
+    const levelCount = {};
+    for (const el of elements) {
+      const raw = el.tags?.["building:levels"];
+      if (!raw) continue;
+      const n = parseInt(raw);
+      if (isNaN(n) || n < 1) continue;
+      levelCount[n] = (levelCount[n] ?? 0) + 1;
+    }
+
+    const entries = Object.entries(levelCount).sort((a, b) => Number(a[0]) - Number(b[0]));
+    if (!entries.length) return null;
+
+    // building:levels en OSM = total de plantas. 1=PB, 2=PB+1, 3=PB+2...
+    const parts = entries.map(([lvl, cnt]) => {
+      const n = Number(lvl);
+      const label = n === 1 ? "PB" : `PB+${n - 1}`;
+      return `${label} ×${cnt}`;
+    });
+    const dominant = entries.sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+    const domLabel = Number(dominant[0]) === 1 ? "PB" : `PB+${Number(dominant[0]) - 1}`;
+
+    return {
+      summary: parts.join("  ·  "),
+      dominant: domLabel,
+      total: entries.reduce((s, [, c]) => s + Number(c), 0),
+    };
+  } catch { return null; }
+}
+
 // Consulta planeamiento urbanístico vía GRAFCAN WMS GetFeatureInfo — toda Canarias
 async function lookupGrafcan(xcen, ycen) {
   if (!xcen || !ycen) return null;
@@ -1056,15 +1108,16 @@ INSTRUCCIÓN CRÍTICA para cambios:
         }
 
         if (catastro?.refCatastral) {
-          // Tenemos referencia catastral — detalle + GRAFCAN en paralelo
-          // Si el catastro ya vino del web scraping, puede que ya traiga uso/supSuelo
+          // Tenemos referencia catastral — detalle + GRAFCAN + Overpass en paralelo
           const webUsoCached = catastro._source === "catastro-web" ? catastro : null;
-          const [detalle, grafcan] = await Promise.all([
+          const [detalle, grafcan, entorno] = await Promise.all([
             webUsoCached ? Promise.resolve(null) : lookupCatastroDetalle(catastro.refCatastral),
             lookupGrafcan(xcen, ycen),
+            nominatim ? lookupOverpass(nominatim.lat, nominatim.lon) : Promise.resolve(null),
           ]);
           normDebug.detalle = detalle ?? webUsoCached;
           normDebug.grafcan = grafcan;
+          normDebug.entorno = entorno;
 
           const uso       = detalle?.uso       ?? webUsoCached?.uso       ?? null;
           const supSuelo  = detalle?.supSuelo  ?? webUsoCached?.supSuelo  ?? null;
@@ -1078,12 +1131,22 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
           if (grafcan) {
             parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
           }
+          if (entorno) {
+            parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m, misma calle/manzana]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)\nReferencia para parcelas de superficie similar (~${supSuelo ?? "?"} m²): interpretar en función de tipología dominante en la trama.`;
+          }
         } else if (xcen && ycen) {
-          // Sin referencia catastral — solo GRAFCAN con coords de Nominatim
-          const grafcan = await lookupGrafcan(xcen, ycen);
+          // Sin referencia catastral — GRAFCAN + Overpass con coords de Nominatim
+          const [grafcan, entorno] = await Promise.all([
+            lookupGrafcan(xcen, ycen),
+            nominatim ? lookupOverpass(nominatim.lat, nominatim.lon) : Promise.resolve(null),
+          ]);
           normDebug.grafcan = grafcan;
+          normDebug.entorno = entorno;
           if (grafcan) {
             parcelBlock = `[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
+          }
+          if (entorno) {
+            parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)`;
           }
         }
       }
