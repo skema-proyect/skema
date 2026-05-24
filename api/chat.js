@@ -451,75 +451,88 @@ function wgs84ToWebMercator(lat, lon) {
 
 // Scraping de OVCListaBienes.aspx — único host accesible desde Frankfurt
 async function lookupCatastroWeb(lat, lon) {
-  try {
-    const { x, y } = wgs84ToWebMercator(lat, lon);
-    const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?origen=Carto&huso=3857&x=${x}&y=${y}`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "es-ES,es;q=0.9",
-      },
-      signal: AbortSignal.timeout(10000),
-      redirect: "follow",
-    });
-    if (!res.ok) return { _err: `HTTP ${res.status}` };
-    const html = await res.text();
+  const tryPoint = async (la, lo) => {
+    try {
+      const { x, y } = wgs84ToWebMercator(la, lo);
+      const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?origen=Carto&huso=3857&x=${x}&y=${y}`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "text/html,application/xhtml+xml",
+          "Accept-Language": "es-ES,es;q=0.9",
+        },
+        signal: AbortSignal.timeout(10000),
+        redirect: "follow",
+      });
+      if (!res.ok) return { _err: `HTTP ${res.status}` };
+      const html = await res.text();
 
-    // ── Referencia catastral ─────────────────────────────────────────────────────
-    // Estrategia 1: extraer del href de OVCConCiud (más fiable — está en el link)
-    let refCatastral =
-      html.match(/[Rr]ef[Cc]=([A-Z0-9]{14,20})/)?.[1] ??
-      html.match(/refcat=([A-Z0-9]{14,20})/i)?.[1] ??
-      // Estrategia 2: patrón 20 chars directo en el texto
-      html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ??
-      // Estrategia 3: patrón 14 chars (referencia de parcela sin código de unidad)
-      html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z])\b/)?.[1] ??
-      null;
+      // Referencia catastral — buscar en todo el HTML
+      let refCatastral =
+        html.match(/[Rr]ef[Cc]=([A-Za-z0-9]{14,20})/)?.[1]?.toUpperCase() ??
+        html.match(/refcat=([A-Za-z0-9]{14,20})/i)?.[1]?.toUpperCase() ??
+        html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ??
+        html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z])\b/)?.[1] ??
+        null;
 
-    // La página puede redirigir a OVCConCiud directamente — también válido
-    const finalUrl = res.url ?? url;
-    if (!refCatastral && finalUrl.includes("RefC=")) {
-      refCatastral = finalUrl.match(/RefC=([A-Z0-9]{14,20})/i)?.[1] ?? null;
-    }
+      const finalUrl = res.url ?? url;
+      if (!refCatastral && finalUrl.includes("RefC=")) {
+        refCatastral = finalUrl.match(/RefC=([A-Za-z0-9]{14,20})/i)?.[1]?.toUpperCase() ?? null;
+      }
 
-    if (!refCatastral) {
-      // Guardar fragmento de HTML para debug
-      const bodyStart = html.toLowerCase().indexOf("<body");
-      const bodyHtml = bodyStart >= 0 ? html.slice(bodyStart, bodyStart + 3000) : html.slice(-3000);
-      return { _err: "refCatastral no encontrada", _html: bodyHtml };
-    }
+      if (!refCatastral) {
+        // Si el HTML contiene "no hay inmuebles", las coords caen en la calle — no es un fallo del parser
+        if (/no hay inmuebles/i.test(html)) return { _noParcel: true };
+        return null;
+      }
 
-    // ── Dirección ───────────────────────────────────────────────────────────────
-    const dirMatch = html.match(/(?:[Dd]irecci[oó]n|[Ll]ocalizaci[oó]n)[^<]{0,30}<[^>]+>([^<]{8,120})/) ||
-                     html.match(/CL\s+[A-Z][A-Z\s]+\d+[^<]{0,60}(?:LAS PALMAS|TENERIFE|SANTA CRUZ)/);
-    const direccion = dirMatch ? dirMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+      const dirMatch = html.match(/(?:[Dd]irecci[oó]n|[Ll]ocalizaci[oó]n)[^<]{0,30}<[^>]+>([^<]{8,120})/) ||
+                       html.match(/CL\s+[A-Z][A-Z\s]+\d+[^<]{0,60}(?:LAS PALMAS|TENERIFE|SANTA CRUZ)/);
+      const direccion = dirMatch ? dirMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    // ── Uso ─────────────────────────────────────────────────────────────────────
-    const usoMatch = html.match(/[Uu]so[^<]{0,40}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,80})/);
-    const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+      const usoMatch = html.match(/[Uu]so[^<]{0,40}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,80})/);
+      const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    // ── Superficie suelo ─────────────────────────────────────────────────────────
-    const supSueloMatch =
-      html.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
-      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
-      html.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i);
-    const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
+      const supSueloMatch =
+        html.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+        html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
+        html.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i);
+      const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
 
-    // ── Coords UTM ───────────────────────────────────────────────────────────────
-    const xcenMatch = html.match(/xcen[^0-9]{0,10}([4-6]\d{5}(?:\.\d+)?)/i);
-    const ycenMatch = html.match(/ycen[^0-9]{0,10}(3\d{6}(?:\.\d+)?)/i);
+      const xcenMatch = html.match(/xcen[^0-9]{0,10}([4-6]\d{5}(?:\.\d+)?)/i);
+      const ycenMatch = html.match(/ycen[^0-9]{0,10}(3\d{6}(?:\.\d+)?)/i);
 
-    return {
-      refCatastral,
-      xcen:      xcenMatch ? parseFloat(xcenMatch[1]) : null,
-      ycen:      ycenMatch ? parseFloat(ycenMatch[1]) : null,
-      direccion,
-      uso,
-      supSuelo,
-      _source: "catastro-web",
-    };
-  } catch (e) { return { _err: e.message }; }
+      return {
+        refCatastral, direccion, uso, supSuelo,
+        xcen: xcenMatch ? parseFloat(xcenMatch[1]) : null,
+        ycen: ycenMatch ? parseFloat(ycenMatch[1]) : null,
+        _source: "catastro-web",
+      };
+    } catch (e) { return { _err: e.message }; }
+  };
+
+  // Nominatim devuelve un punto en la calle o acera — probar varios offsets ±20m
+  // para que alguno caiga dentro de la parcela real
+  const d = 0.00018; // ≈ 20m
+  const points = [
+    [lat, lon],         // punto original
+    [lat + d, lon],     // norte
+    [lat - d, lon],     // sur
+    [lat, lon + d],     // este
+    [lat, lon - d],     // oeste
+    [lat + d, lon + d], // noreste
+    [lat - d, lon - d], // suroeste
+  ];
+
+  const results = await Promise.all(points.map(([la, lo]) => tryPoint(la, lo)));
+  const success = results.find(r => r?.refCatastral);
+  if (success) return success;
+
+  const allNoParcel = results.every(r => r?._noParcel || r === null);
+  return {
+    _err: allNoParcel ? "sin_inmueble_en_area" : "refCatastral no encontrada en ningún punto",
+    _pointsTriedCount: points.length,
+  };
 }
 
 // Geocodifica una dirección vía Nominatim (OpenStreetMap) → {lat, lon} WGS84
