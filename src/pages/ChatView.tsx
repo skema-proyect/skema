@@ -241,7 +241,7 @@ export default function ChatView() {
             {SERVICES.map(({ icon: Icon, label, prompt }) => (
               <button
                 key={label}
-                onClick={() => setInput(prompt)}
+                onClick={() => { setInput(prompt); if (!prompt) setTimeout(() => textareaRef.current?.focus(), 50); }}
                 className="flex items-center gap-2 px-4 py-2.5 border border-s-border rounded-lg text-[15px] sm:text-[13px] text-s-muted hover:text-s-text hover:border-s-text transition-colors"
               >
                 <Icon size={13} />
