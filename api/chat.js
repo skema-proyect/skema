@@ -73,10 +73,31 @@ DATOS: Si el contexto incluye [DATOS CATASTRALES OFICIALES], [PLANEAMIENTO URBAN
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
-MODO REDACCIÓN ACTIVO:
-Genera documentos profesionales estructurados.
-Elimina las muletillas del lenguaje hablado.
-Usa formato claro con secciones, bullet points donde sea eficiente.`;
+MODO REDACCIÓN ACTIVO — COAUTOR PROFESIONAL:
+
+Tu función es generar, corregir y mejorar textos y documentos profesionales. Actúas como coautor, no como transcriptor.
+
+REGLAS DE CALIDAD — siempre, sin excepción:
+- Corrige todos los errores ortográficos y gramaticales del texto dictado o escrito
+- Mejora la redacción si está confusa, incompleta o poco profesional — sin cambiar el sentido
+- Elimina repeticiones, muletillas y lenguaje oral
+- Si el texto dictado es un borrador caótico, organízalo con estructura lógica
+- Si falta información necesaria para un documento (partes, fechas, datos), señálalo brevemente al final
+
+FORMATO — inamovible salvo que el usuario lo pida explícitamente:
+- Sin emojis, sin colores, sin decoración visual
+- Blanco y negro, tipografía limpia
+- Usa encabezados, secciones y listas solo cuando la estructura del documento lo requiere
+- Sin frases de relleno al inicio ("Claro, aquí tienes...", "Por supuesto...")
+
+MODO ITERATIVO:
+- Cuando el usuario pide cambios, devuelve siempre el documento COMPLETO actualizado, nunca solo el fragmento modificado
+- El documento que se muestra en pantalla es el que se descargará — no hay versión diferente
+
+AL TERMINAR (cuando el usuario dé el visto bueno o el documento esté listo):
+Pregunta exactamente esto, sin añadir nada más:
+"¿Lo descargamos o lo guardamos? Para descarga: PDF, Word o Excel (si hay tablas). Para guardar: en Notas o en un Proyecto."`;
+
 
 // Sketch conversation — discuss changes in text, no generation
 const SKETCH_CHAT_SYSTEM = `Eres un arquitecto experto trabajando con un cliente en la definición de un plano de planta.
@@ -1108,8 +1129,11 @@ function detectIntent(message) {
     /\b\d{7}[A-Za-z]{2}\d{4}[A-Za-z]\d{4}[A-Za-z]{2}\b/.test(message)  // referencia catastral directa
   ) return "normativa";
 
-  if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
-    return "document";
+  if (
+    /\b(redacta|redactar|escribe|escribir|genera|generar|elabora|elaborar|prepara|preparar|crea|crear|haz|hacer|necesito|quiero)\b.{0,30}\b(informe|acta|contrato|memoria|certificado|presupuesto|oferta|propuesta|resumen|documento|escrito|carta|email|correo|nota\s+interior|minuta|requerimiento|notificacion|denuncia|solicitud|declaracion|dictamen|protocolo|manual|instruccion|procedimiento)\b/i.test(message) ||
+    /\b(corrige|correg|mejora|revisa|reescribe|reformula|adapta|traduce)\b.{0,40}\b(texto|redacc|document|escrit|parrafo|carta|informe|contrato)\b/i.test(message) ||
+    /\b(texto|documento|escrito)\b.{0,30}\b(profesional|formal|oficial|juridico|tecnico|administrativo)\b/i.test(message)
+  ) return "document";
 
   // Normalizar acentos — ̀-ͯ cubre todos los diacríticos combinados
   const n = message.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -1166,9 +1190,12 @@ export default async function handler(req, res) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
 
-  // If any previous message in this conversation was a sketch, stay in sketch mode
-  const isSketchConversation = messages.some(m => m.tool === "sketch");
-  let intent = isSketchConversation ? "sketch" : detectIntent(lastUser.content);
+  // Si la conversación ya tiene sketch o document, mantenemos el modo
+  const isSketchConversation   = messages.some(m => m.tool === "sketch");
+  const isDocumentConversation = messages.some(m => m.tool === "document");
+  let intent = isSketchConversation   ? "sketch"
+             : isDocumentConversation ? "document"
+             : detectIntent(lastUser.content);
 
   // Si ya había interacción de agenda Y el usuario da detalles (fecha/hora/título), mantener en agenda
   if (intent === "chat" && hasAgendaHistory) {
@@ -1577,7 +1604,7 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     // ── Document ──
     if (intent === "document") {
       const msg = await client.messages.create({
-        model: MODELS.smart, max_tokens: 3000,
+        model: MODELS.smart, max_tokens: 6000,
         system: DOCUMENT_SYSTEM + projectContext, messages: history,
       });
       return res.json({ content: msg.content[0]?.text ?? "", tool: "document", model: MODELS.smart });
