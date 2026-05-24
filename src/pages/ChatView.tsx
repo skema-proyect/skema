@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Download, CalendarCheck, StickyNote } from "lucide-react";
+import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { conversations as convsDB, projects as projectsDB, events as eventsDB, notes as notesDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
-import type { Message } from "@/types";
+import { downloadPDF, downloadWord, downloadCSV, hasTable, extractDocTitle } from "@/lib/docExport";
+import type { Message, Project } from "@/types";
 
 interface OutletCtx {
   currentConvId: string | null;
@@ -255,7 +256,7 @@ export default function ChatView() {
       {messages.length > 0 && (
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
           {messages.map(m => (
-            <MessageBubble key={m.id} message={m} onDownloadSVG={downloadSVG} />
+            <MessageBubble key={m.id} message={m} onDownloadSVG={downloadSVG} convId={currentConvId} bump={bump} />
           ))}
           {loading && (
             <div className="flex gap-3 max-w-2xl">
@@ -332,7 +333,186 @@ export default function ChatView() {
   );
 }
 
-function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDownloadSVG: (svg: string) => void }) {
+// ── Document card ─────────────────────────────────────────────────────────────
+
+type SaveStep = "idle" | "choosing" | "notes" | "project" | "saved";
+
+function DocumentCard({ message, convId, bump }: {
+  message: Message;
+  convId: string | null;
+  bump: () => void;
+}) {
+  const [step,       setStep]       = useState<SaveStep>("idle");
+  const [titleInput, setTitleInput] = useState("");
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [selectedPid, setSelectedPid] = useState<string | null>(null);
+  const [newProjName, setNewProjName] = useState("");
+  const [saving,     setSaving]     = useState(false);
+  const [savedMsg,   setSavedMsg]   = useState("");
+
+  const content  = message.content;
+  const docTitle = extractDocTitle(content);
+
+  const openProject = async () => {
+    const projs = await projectsDB.getAll();
+    setAllProjects(projs);
+    setTitleInput(docTitle);
+    setStep("project");
+  };
+
+  const openNotes = () => { setTitleInput(docTitle); setStep("notes"); };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const t = titleInput.trim() || docTitle;
+      const note = await notesDB.create();
+      await notesDB.update(note.id, { title: t, content });
+
+      if (step === "project") {
+        let pid = selectedPid;
+        if (!pid && newProjName.trim()) {
+          const p = await projectsDB.create(newProjName.trim());
+          pid = p.id;
+        }
+        if (pid && convId) await convsDB.assignProject(convId, pid);
+        const projName = allProjects.find(p => p.id === pid)?.name ?? newProjName.trim();
+        setSavedMsg(`Guardado en notas${projName ? ` · Proyecto: ${projName}` : ""}`);
+      } else {
+        setSavedMsg("Guardado en notas");
+      }
+      setStep("saved");
+      bump();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const btnBase = "flex items-center gap-1 px-3 py-1.5 rounded-lg border border-s-border text-[12px] text-s-muted hover:text-s-text hover:border-s-text transition-colors";
+  const btnPrimary = "px-3 py-1.5 rounded-lg bg-s-text text-s-bg text-[12px] font-medium hover:opacity-80 disabled:opacity-40 transition-opacity";
+
+  return (
+    <div className="bg-white rounded-xl border border-s-border shadow-sm overflow-hidden w-full">
+      {/* Header */}
+      <div className="flex items-center px-4 py-2 bg-s-surface border-b border-s-border">
+        <span className="text-[10px] font-semibold text-s-muted uppercase tracking-wider">Documento</span>
+      </div>
+
+      {/* Content */}
+      <div className="px-8 py-6 text-gray-900 prose prose-sm max-w-none
+        prose-headings:text-gray-900 prose-headings:font-bold
+        prose-p:text-gray-800 prose-p:my-1.5
+        prose-strong:text-gray-900
+        prose-li:text-gray-800 prose-li:my-0.5
+        prose-table:text-[13px] prose-th:bg-gray-50 prose-th:font-semibold
+        prose-hr:border-gray-300">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+
+      {/* Action bar */}
+      {step !== "saved" && (
+        <div className="px-4 py-2.5 border-t border-s-border bg-s-surface flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => downloadPDF(content, docTitle)} className={btnBase} title="Descargar PDF">
+              <FileDown size={12} /> PDF
+            </button>
+            <button onClick={() => downloadWord(content, docTitle)} className={btnBase} title="Descargar Word">
+              <FileDown size={12} /> Word
+            </button>
+            {hasTable(content) && (
+              <button onClick={() => downloadCSV(content, docTitle)} className={btnBase} title="Exportar tabla a Excel">
+                <FileDown size={12} /> Excel
+              </button>
+            )}
+          </div>
+          {step === "idle" && (
+            <button onClick={() => setStep("choosing")} className={btnBase}>
+              Guardar
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Save flow ── */}
+
+      {step === "choosing" && (
+        <div className="px-4 py-3 border-t border-s-border bg-s-surface flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] text-s-muted">¿Dónde guardarlo?</span>
+          <button onClick={openNotes}    className={btnPrimary}>Notas</button>
+          <button onClick={openProject}  className={btnBase}>Proyecto</button>
+          <button onClick={() => setStep("idle")} className="ml-auto text-s-muted hover:text-s-text transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {(step === "notes" || step === "project") && (
+        <div className="px-4 py-3 border-t border-s-border bg-s-surface space-y-2.5">
+          <input
+            value={titleInput}
+            onChange={e => setTitleInput(e.target.value)}
+            placeholder="Título"
+            className="w-full bg-s-bg border border-s-border rounded-lg px-3 py-1.5 text-[13px] text-s-text outline-none focus:border-s-text transition-colors"
+          />
+
+          {step === "project" && (
+            <div className="space-y-2">
+              {allProjects.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {allProjects.map(p => (
+                    <button key={p.id}
+                      onClick={() => { setSelectedPid(p.id === selectedPid ? null : p.id); setNewProjName(""); }}
+                      className={`px-2.5 py-1 rounded-lg text-[12px] border transition-colors ${
+                        selectedPid === p.id
+                          ? "bg-s-text text-s-bg border-s-text"
+                          : "border-s-border text-s-muted hover:border-s-text hover:text-s-text"
+                      }`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-s-muted flex-shrink-0">Nuevo proyecto:</span>
+                <input
+                  value={newProjName}
+                  onChange={e => { setNewProjName(e.target.value); setSelectedPid(null); }}
+                  placeholder="Nombre"
+                  className="flex-1 bg-s-bg border border-s-border rounded-lg px-3 py-1.5 text-[12px] text-s-text outline-none focus:border-s-text transition-colors"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button onClick={save} disabled={saving} className={btnPrimary}>
+              {saving ? "Guardando..." : "Guardar"}
+            </button>
+            <button onClick={() => setStep("choosing")} className="text-[12px] text-s-muted hover:text-s-text transition-colors">
+              ← Atrás
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === "saved" && (
+        <div className="px-4 py-2.5 border-t border-s-border bg-s-surface flex items-center gap-1.5">
+          <Check size={13} className="text-green-600" />
+          <span className="text-[12px] text-s-muted">{savedMsg}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Message bubble ─────────────────────────────────────────────────────────────
+
+function MessageBubble({ message: m, onDownloadSVG, convId, bump }: {
+  message: Message;
+  onDownloadSVG: (svg: string) => void;
+  convId: string | null;
+  bump: () => void;
+}) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
@@ -346,6 +526,9 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
     <div className="flex gap-3 max-w-2xl">
       <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
+        {m.tool === "document" ? (
+          <DocumentCard message={m} convId={convId} bump={bump} />
+        ) : (
         <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-headings:text-s-text prose-strong:text-s-text prose-li:my-0.5">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -356,6 +539,7 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
             {(m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim()}
           </ReactMarkdown>
         </div>
+        )}
         {m.tool === "agenda" && (
           <div className="flex items-center gap-1.5 text-[12px] text-s-muted">
             <CalendarCheck size={13} /> Añadido a la agenda
