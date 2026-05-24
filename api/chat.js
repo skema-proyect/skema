@@ -45,18 +45,22 @@ Capacidades integradas — IMPORTANTE:
 
 const NORMATIVA_SYSTEM = `${SYSTEM}
 
-MODO NORMATIVA ACTIVO:
-Responde como consultor experto en normativa urbanística de Gran Canaria.
-Cita artículos, planes y normas específicas cuando sea posible.
-Si hay ambigüedad, indícalo y orienta a la fuente oficial.
+MODO NORMATIVA ACTIVO — CONSULTOR URBANÍSTICO:
+Eres el primer filtro de consulta de un estudio de arquitectura. Tu función es dar una orientación rápida, concreta y útil basada en los datos disponibles. No eres un organismo oficial — eres el colega experto que da una primera lectura antes de ir a los trámites.
 
-DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro ni en ningún visor si ya tienes esos datos aquí.
+REGLA PRINCIPAL: SIEMPRE da un veredicto concreto con números. Nunca te quedes en "depende" o "hay que consultar". Si tienes datos parciales, da el rango más probable y di que es estimación no oficial. Si no tienes datos, usa tu conocimiento del planeamiento canario para la zona y el municipio. El cliente necesita una idea de trabajo, no una derivación burocrática.
 
-Si el bloque de GRAFCAN contiene URLs de PDFs, inclúyelas en la respuesta como enlaces directos. Explica brevemente qué contiene cada documento: "Plano de edificación" = ordenanzas de altura, retranqueos y edificabilidad; "Zonificación" = clasificación y uso del suelo; "Categoría de suelo" = clase urbanística (urbano, rústico, etc.); "Usos globales" = usos permitidos y prohibidos.
+FORMATO DE RESPUESTA cuando hay consulta sobre parcela:
+1. Datos de la parcela (del Catastro si disponibles): superficie, uso, lo que hay construido
+2. Estimación no oficial: número de plantas probable, altura máxima aproximada, edificabilidad orientativa — con el texto "⚠️ Estimación no oficial basada en el planeamiento vigente"
+3. Documentos de referencia: si hay links de GRAFCAN, inclúyelos como "Documentos del PGOU aplicables:" con una línea por cada uno explicando qué regula
+4. Siguiente paso concreto: qué hay que pedir y a quién si quieren el dato vinculante (ej: "cédula urbanística en el Ayuntamiento de X")
 
-Con esa información, da tu mejor interpretación de los parámetros urbanísticos aplicables según tu conocimiento del planeamiento canario, e indica que el dato vinculante está en los documentos enlazados.
+DATOS DE PARCELA: Si el contexto incluye [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN], úsalos como base. No digas al usuario que busque en ningún visor si ya tienes los datos.
 
-Si los datos de planeamiento no están disponibles, remite a visor.grafcan.es.`;
+Si los links de GRAFCAN contienen URLs de PDFs, inclúyelas. Nombra cada documento de forma legible: elimina el prefijo de URL, muestra solo el nombre del archivo como texto del enlace.
+
+Si no hay datos de ninguna fuente, usa tu conocimiento del planeamiento del municipio para dar la estimación igualmente, marcándola como orientativa.`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -555,6 +559,29 @@ async function lookupCatastro(addr) {
   } catch (e) { return { _err: e.message }; }
 }
 
+// Consulta Catastro por coordenadas WGS84 → referencia catastral + coords UTM
+async function lookupCatastroByCoords(lat, lon) {
+  try {
+    const res = await fetch(
+      `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/REST/OVCCallejero.svc/Consulta_RCCOOR?SRS=EPSG:4258&Coordenada_X=${lon}&Coordenada_Y=${lat}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    const xml = await res.text();
+    const pc1 = xml.match(/<pc1>([^<]+)<\/pc1>/)?.[1]?.trim();
+    const pc2 = xml.match(/<pc2>([^<]+)<\/pc2>/)?.[1]?.trim();
+    if (!pc1) return { _err: xml.match(/<err>([^<]*)<\/err>/)?.[1]?.trim() ?? "sin_resultado" };
+    const xcen = parseFloat(xml.match(/<xcen>([^<]+)<\/xcen>/)?.[1] ?? "NaN");
+    const ycen = parseFloat(xml.match(/<ycen>([^<]+)<\/ycen>/)?.[1] ?? "NaN");
+    const ldt  = xml.match(/<ldt>([^<]+)<\/ldt>/)?.[1]?.trim() ?? "";
+    return {
+      refCatastral: pc1 + pc2,
+      xcen: isNaN(xcen) ? null : xcen,
+      ycen: isNaN(ycen) ? null : ycen,
+      direccion: ldt,
+    };
+  } catch (e) { return { _err: e.message }; }
+}
+
 // Consulta detalle de parcela por referencia catastral (uso, superficie)
 async function lookupCatastroDetalle(refCatastral) {
   try {
@@ -942,40 +969,48 @@ INSTRUCCIÓN CRÍTICA para cambios:
         normDebug.catastro  = parcel;
         normDebug.nominatim = nominatim;
 
+        // Si Catastro por dirección falló pero tenemos coords de Nominatim → intentar por coords
+        let catastro = parcel;
+        if (!parcel?.refCatastral && nominatim) {
+          const byCoords = await lookupCatastroByCoords(nominatim.lat, nominatim.lon);
+          normDebug.catastroByCoords = byCoords;
+          if (byCoords?.refCatastral) catastro = byCoords;
+        }
+
         // Coordenadas UTM: prioridad Catastro; fallback Nominatim → UTM
-        let xcen = parcel?.xcen ?? null;
-        let ycen = parcel?.ycen ?? null;
+        let xcen = catastro?.xcen ?? null;
+        let ycen = catastro?.ycen ?? null;
         if ((!xcen || !ycen) && nominatim) {
           const utm = wgs84ToUtm28N(nominatim.lat, nominatim.lon);
           xcen = utm.x;
           ycen = utm.y;
           normDebug.coordSource = "nominatim→utm";
         } else if (xcen && ycen) {
-          normDebug.coordSource = "catastro";
+          normDebug.coordSource = catastro === parcel ? "catastro" : "catastro-por-coords";
         }
 
-        if (parcel?.refCatastral) {
-          // Catastro OK — detalle + GRAFCAN en paralelo
+        if (catastro?.refCatastral) {
+          // Tenemos referencia catastral — detalle + GRAFCAN en paralelo
           const [detalle, grafcan] = await Promise.all([
-            lookupCatastroDetalle(parcel.refCatastral),
+            lookupCatastroDetalle(catastro.refCatastral),
             lookupGrafcan(xcen, ycen),
           ]);
           normDebug.detalle = detalle;
           normDebug.grafcan = grafcan;
 
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
-Referencia catastral: ${parcel.refCatastral}
-Dirección registrada: ${parcel.direccion}${detalle ? `
+Referencia catastral: ${catastro.refCatastral}
+Dirección registrada: ${catastro.direccion}${detalle ? `
 Uso catastral: ${detalle.uso ?? "–"}
 Superficie suelo: ${detalle.supSuelo ? detalle.supSuelo + " m²" : "–"}
 Superficie construida: ${detalle.supConst ? detalle.supConst + " m²" : "–"}` : ""}
-Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${parcel.refCatastral}`;
+Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${catastro.refCatastral}`;
 
           if (grafcan) {
             parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
           }
         } else if (xcen && ycen) {
-          // Catastro inaccesible desde Vercel — solo GRAFCAN vía Nominatim
+          // Sin referencia catastral — solo GRAFCAN con coords de Nominatim
           const grafcan = await lookupGrafcan(xcen, ycen);
           normDebug.grafcan = grafcan;
           if (grafcan) {

@@ -347,7 +347,12 @@ function MessageBubble({ message: m, onDownloadSVG }: { message: Message; onDown
       <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
       <div className="flex-1 space-y-3">
         <div className="text-[16px] sm:text-[14px] text-s-text leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-headings:text-s-text prose-strong:text-s-text prose-li:my-0.5">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{ a: ({ href, children }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+            )}}
+          >
             {(m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim()}
           </ReactMarkdown>
         </div>
