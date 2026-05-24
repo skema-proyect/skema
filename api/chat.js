@@ -449,7 +449,7 @@ function wgs84ToWebMercator(lat, lon) {
   return { x: x.toFixed(2), y: y.toFixed(2) };
 }
 
-// Scraping de OVCListaBienes.aspx — host distinto al de la API REST, menos propenso a bloqueo
+// Scraping de OVCListaBienes.aspx — único host accesible desde Frankfurt
 async function lookupCatastroWeb(lat, lon) {
   try {
     const { x, y } = wgs84ToWebMercator(lat, lon);
@@ -466,28 +466,45 @@ async function lookupCatastroWeb(lat, lon) {
     if (!res.ok) return { _err: `HTTP ${res.status}` };
     const html = await res.text();
 
-    // Referencia catastral: 7 dígitos + 2 letras + 4 dígitos + 1 letra + 4 dígitos + 2 letras = 20 chars
-    const refMatch = html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/);
-    if (!refMatch) return { _err: "refCatastral no encontrada en HTML" };
-    const refCatastral = refMatch[1];
+    // ── Referencia catastral ─────────────────────────────────────────────────────
+    // Estrategia 1: extraer del href de OVCConCiud (más fiable — está en el link)
+    let refCatastral =
+      html.match(/[Rr]ef[Cc]=([A-Z0-9]{14,20})/)?.[1] ??
+      html.match(/refcat=([A-Z0-9]{14,20})/i)?.[1] ??
+      // Estrategia 2: patrón 20 chars directo en el texto
+      html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ??
+      // Estrategia 3: patrón 14 chars (referencia de parcela sin código de unidad)
+      html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z])\b/)?.[1] ??
+      null;
 
-    // Dirección — busca el link a OVCConCiud o el texto dirección en la tabla
-    const dirMatch = html.match(/OVCConCiud\.aspx[^"']*["'][^>]*>([^<]{8,120})/i) ||
-                     html.match(/(?:Direccion|Direcci[oó]n|Localizaci[oó]n)[^:]{0,5}:[^<]{0,5}<[^>]+>([^<]{8,100})/i);
+    // La página puede redirigir a OVCConCiud directamente — también válido
+    const finalUrl = res.url ?? url;
+    if (!refCatastral && finalUrl.includes("RefC=")) {
+      refCatastral = finalUrl.match(/RefC=([A-Z0-9]{14,20})/i)?.[1] ?? null;
+    }
+
+    if (!refCatastral) {
+      // Guardar fragmento de HTML para debug
+      return { _err: "refCatastral no encontrada", _html: html.slice(0, 500) };
+    }
+
+    // ── Dirección ───────────────────────────────────────────────────────────────
+    const dirMatch = html.match(/(?:[Dd]irecci[oó]n|[Ll]ocalizaci[oó]n)[^<]{0,30}<[^>]+>([^<]{8,120})/) ||
+                     html.match(/CL\s+[A-Z][A-Z\s]+\d+[^<]{0,60}(?:LAS PALMAS|TENERIFE|SANTA CRUZ)/);
     const direccion = dirMatch ? dirMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    // Uso del suelo — Catastro pone el uso en celdas después de "Uso" en la tabla
-    const usoMatch = html.match(/[Uu]so\s*(?:catastral)?[^<]{0,30}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+    // ── Uso ─────────────────────────────────────────────────────────────────────
+    const usoMatch = html.match(/[Uu]so[^<]{0,40}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,80})/);
     const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    // Superficie suelo — busca específicamente el campo "suelo" para evitar coger "construido"
+    // ── Superficie suelo ─────────────────────────────────────────────────────────
     const supSueloMatch =
-      html.match(/[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is) ||
-      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,60}?[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo/is) ||
-      html.match(/id="[^"]*[Ss]uperficie[Ss]uelo[^"]*"[^>]*>(\d[\d.,]+)/i);
-    const supSuelo = supSueloMatch ? supSueloMatch[1].replace(",", ".") : null;
+      html.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
+      html.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i);
+    const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
 
-    // Coords UTM en la página (Catastro las incluye a veces en atributos data o meta)
+    // ── Coords UTM ───────────────────────────────────────────────────────────────
     const xcenMatch = html.match(/xcen[^0-9]{0,10}([4-6]\d{5}(?:\.\d+)?)/i);
     const ycenMatch = html.match(/ycen[^0-9]{0,10}(3\d{6}(?:\.\d+)?)/i);
 
@@ -698,7 +715,7 @@ async function lookupCatastroWFS(lat, lon) {
   } catch (e) { return { _err: e.message }; }
 }
 
-// Detalle por referencia catastral vía scraping OVCConCiud.aspx (fallback si REST bloqueado)
+// Detalle vía OVCConCiud.aspx — página de ficha individual, HTML más limpio que OVCListaBienes
 async function lookupCatastroDetalleWeb(refCatastral) {
   try {
     const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${encodeURIComponent(refCatastral)}`;
@@ -714,25 +731,28 @@ async function lookupCatastroDetalleWeb(refCatastral) {
     if (!res.ok) return null;
     const html = await res.text();
 
-    // Superficie suelo — busca "suelo" cerca del número
+    // Superficie suelo — múltiples patrones para distintas versiones del HTML de Catastro
     const supSueloMatch =
-      html.match(/[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
-      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo/is);
+      html.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
+      html.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i) ||
+      // Último recurso: todos los números m² — coger el menor que tenga sentido (suelo < construido generalmente)
+      null;
     const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
 
     // Superficie construida
     const supConstMatch =
-      html.match(/[Ss]up(?:erficie)?\s*[Cc]onstrui[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is) ||
-      html.match(/[Cc]onstrui[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is);
+      html.match(/[Ss]up(?:erficie)?\s*[Cc]onstrui[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/[Cc]onstrui[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is);
     const supConst = supConstMatch?.[1]?.replace(",", ".") ?? null;
 
     // Uso
-    const usoMatch = html.match(/[Uu]so\s*(?:catastral)?[^<]{0,40}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+    const usoMatch = html.match(/[Uu]so[^<]{0,50}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
     const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
 
-    if (!supSuelo && !uso) return null;
+    if (!supSuelo && !uso) return { _err: "sin_datos_en_OVCConCiud", _html: html.slice(0, 500) };
     return { uso, supSuelo, supConst, _source: "catastro-web-detalle" };
-  } catch { return null; }
+  } catch (e) { return { _err: e.message }; }
 }
 
 // Consulta edificaciones en el entorno inmediato vía Overpass (OpenStreetMap)
