@@ -587,7 +587,41 @@ async function lookupCatastroWeb(lat, lon) {
   return { _err: allNoParcel ? "sin_inmueble_en_area" : "refCatastral no encontrada", _pointsTriedCount: points.length };
 }
 
-// Geocodifica una dirección vía Nominatim (OpenStreetMap) → {lat, lon} WGS84
+// Geocodifica una dirección vía Google Geocoding API → {lat, lon, municipioOficial}
+// Ventajas sobre Nominatim: coordenadas en la entrada del edificio (no en la calzada)
+// y jerarquía administrativa correcta para España (level_4 = municipio catastral)
+async function geocodeGoogle(addr) {
+  const key = process.env.GEOCODING_API;
+  if (!key) return null;
+  try {
+    const q = [addr.nombre_via, addr.numero, addr.municipio, "Canarias", "España"]
+      .filter(Boolean).join(", ");
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${key}&language=es&region=ES`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const data = await res.json();
+    if (data.status !== "OK" || !data.results?.length) return { _err: data.status };
+    const result = data.results[0];
+    const { lat, lng } = result.geometry.location;
+    const comps = result.address_components ?? [];
+    const get = (...types) => {
+      for (const t of types) {
+        const c = comps.find(c => c.types.includes(t));
+        if (c) return c.long_name;
+      }
+      return null;
+    };
+    // En España: level_4 = municipio, level_2 = provincia
+    const municipioRaw = get("administrative_area_level_4", "administrative_area_level_3");
+    return {
+      lat,
+      lon: lng,
+      municipioOficial: municipioRaw ? normCatastro(municipioRaw) : null,
+      _source: "google",
+    };
+  } catch (e) { return { _err: e.message }; }
+}
+
+// Fallback: Nominatim (OpenStreetMap) — usado si Google no está disponible
 async function geocodeNominatim(addr) {
   try {
     const q = [addr.nombre_via, addr.numero, addr.municipio, "Canarias", "España"]
@@ -600,14 +634,21 @@ async function geocodeNominatim(addr) {
     if (!Array.isArray(data) || !data.length) return null;
     const item = data[0];
     const a = item.address ?? {};
-    // Municipio oficial del registro administrativo de OSM (no el barrio/pedanía)
-    const municipioOficial = a.city ?? a.town ?? a.municipality ?? a.county ?? null;
+    const municipioOficial = a.city ?? a.town ?? a.municipality ?? null;
     return {
       lat: parseFloat(item.lat),
       lon: parseFloat(item.lon),
       municipioOficial: municipioOficial ? normCatastro(municipioOficial) : null,
+      _source: "nominatim",
     };
   } catch { return null; }
+}
+
+// Geocodificación: Google primero (más preciso), Nominatim como fallback
+async function geocodeAddress(addr) {
+  const google = await geocodeGoogle(addr);
+  if (google?.lat) return google;
+  return geocodeNominatim(addr);
 }
 
 // Municipios de Gran Canaria para reconocimiento por nombre
@@ -1300,10 +1341,10 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
       }
 
       if (addr.tiene_direccion) {
-        // REST + Nominatim + web-por-dirección en paralelo (los 3 usan solo addr, no dependen entre sí)
+        // REST + geocoding + web-por-dirección en paralelo (los 3 usan solo addr)
         const [parcel, nominatim, webByAddr] = await Promise.all([
           lookupCatastro(addr),
-          geocodeNominatim(addr),
+          geocodeAddress(addr),
           lookupCatastroWebByAddress(addr),
         ]);
         normDebug.catastro      = parcel;
