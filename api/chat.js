@@ -477,7 +477,7 @@ function parseListaBienesHtml(html, finalUrl) {
   };
 }
 
-// Busca en OVCListaBienes por dirección — Catastro hace el match exacto, sin depender de coords
+// Busca en OVCListaBienes por dirección — GET para obtener VIEWSTATE + POST para ejecutar búsqueda
 async function lookupCatastroWebByAddress(addr) {
   try {
     const prov  = normCatastro(addr.provincia ?? "LAS PALMAS");
@@ -490,24 +490,63 @@ async function lookupCatastroWebByAddress(addr) {
       `?tipo=D&prov=${encodeURIComponent(prov)}&mun=${encodeURIComponent(mun)}` +
       `&sigla=${encodeURIComponent(sigla)}&via=${encodeURIComponent(via)}&num=${num}`;
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "es-ES,es;q=0.9",
-        "Referer": "https://www1.sedecatastro.gob.es/OVCInicio.aspx",
-      },
+    const commonHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "es-ES,es;q=0.9",
+    };
+
+    // Paso 1 — GET: cargar el formulario y extraer VIEWSTATE + EVENTVALIDATION
+    const getRes = await fetch(url, {
+      headers: { ...commonHeaders, "Referer": "https://www1.sedecatastro.gob.es/OVCInicio.aspx" },
       signal: AbortSignal.timeout(10000),
       redirect: "follow",
     });
-    if (!res.ok) return { _err: `HTTP ${res.status}`, _url: url };
-    const html = await res.text();
+    if (!getRes.ok) return { _err: `GET HTTP ${getRes.status}` };
+    const getHtml = await getRes.text();
 
-    const result = parseListaBienesHtml(html, res.url ?? url);
+    const viewState    = getHtml.match(/name="__VIEWSTATE"[^>]*value="([^"]+)"/)?.[1] ??
+                         getHtml.match(/id="__VIEWSTATE"[^>]*value="([^"]+)"/)?.[1] ?? "";
+    const vsGen        = getHtml.match(/name="__VIEWSTATEGENERATOR"[^>]*value="([^"]+)"/)?.[1] ?? "";
+    const evValidation = getHtml.match(/name="__EVENTVALIDATION"[^>]*value="([^"]+)"/)?.[1] ?? "";
+
+    if (!viewState) return { _err: "no_viewstate" };
+
+    // Cookie de sesión si la hay
+    const cookieHeader = getRes.headers.get("set-cookie")
+      ? { "Cookie": getRes.headers.get("set-cookie").split(";")[0] }
+      : {};
+
+    // Paso 2 — POST: enviar la búsqueda con el VIEWSTATE del formulario
+    // __EVENTTARGET simula click en el botón de búsqueda (control típico de Catastro)
+    const postBody = new URLSearchParams({
+      "__EVENTTARGET":           "ctl00$Contenido$btnBuscar",
+      "__EVENTARGUMENT":         "",
+      "__VIEWSTATE":             viewState,
+      "__VIEWSTATEGENERATOR":    vsGen,
+      "__EVENTVALIDATION":       evValidation,
+    });
+
+    const postRes = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...commonHeaders,
+        ...cookieHeader,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": url,
+      },
+      body: postBody.toString(),
+      signal: AbortSignal.timeout(10000),
+      redirect: "follow",
+    });
+    if (!postRes.ok) return { _err: `POST HTTP ${postRes.status}` };
+    const postHtml = await postRes.text();
+
+    const result = parseListaBienesHtml(postHtml, postRes.url ?? url);
     if (!result || result._noParcel) {
-      const bodyStart = html.toLowerCase().indexOf("<body");
-      const bodySnip  = bodyStart >= 0 ? html.slice(bodyStart, bodyStart + 2000) : html.slice(0, 2000);
-      return { _err: result?._noParcel ? "sin_inmueble_dir" : "refCatastral no encontrada (dir)", _html: bodySnip, _url: url };
+      const bodyStart = postHtml.toLowerCase().indexOf("<body");
+      const bodySnip  = bodyStart >= 0 ? postHtml.slice(bodyStart, bodyStart + 2500) : postHtml.slice(0, 2500);
+      return { _err: result?._noParcel ? "sin_inmueble_dir" : "refCatastral no encontrada (post)", _html: bodySnip };
     }
     return result;
   } catch (e) { return { _err: e.message }; }
@@ -1348,6 +1387,26 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
           normDebug.grafcan = grafcan;
           normDebug.entorno = entorno;
 
+          // Si la referencia vino de scraping por coordenadas y OVCConCiud devuelve error,
+          // la referencia es de una parcela vecina incorrecta — descartarla
+          const detalleEsError = detalle?._err === "sin_datos_en_OVCConCiud";
+          if (detalleEsError && catastro._source === "catastro-web") {
+            normDebug.refDescartada = catastro.refCatastral;
+            // Caer al bloque "sin datos" pasando por el código de abajo
+            const [grafcanFallback, entornoFallback] = await Promise.all([
+              (xcen && ycen) ? lookupGrafcan(xcen, ycen) : Promise.resolve(grafcan),
+              Promise.resolve(entorno),
+            ]);
+            normDebug.grafcan = grafcanFallback ?? grafcan;
+            parcelBlock = `[AVISO SISTEMA — SIN DATOS CATASTRALES]\nNo se pudo obtener referencia catastral válida para esta dirección.\nREGLA CRÍTICA: NO inventes metros cuadrados, referencia catastral ni ningún dato físico de la parcela.\nIndica al usuario que no se pudo consultar Catastro y ofrece este link para consulta manual:\nhttps://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
+            if (grafcanFallback ?? grafcan) {
+              parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${(grafcanFallback ?? grafcan).text}`;
+            }
+            if (entorno) {
+              parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)`;
+            }
+          } else {
+
           const uso       = detalle?.uso      ?? null;
           const supSuelo  = detalle?.supSuelo ?? null;
           const supConst  = detalle?.supConst ?? null;
@@ -1363,6 +1422,8 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
           if (entorno) {
             parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m, misma calle/manzana]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)\nReferencia para parcelas de superficie similar (~${supSuelo ?? "?"} m²): interpretar en función de tipología dominante en la trama.`;
           }
+          } // cierre else (referencia válida)
+
         } else {
           // Sin referencia catastral tras todos los intentos
           // Todavía podemos dar GRAFCAN + Overpass si tenemos coords de Nominatim
