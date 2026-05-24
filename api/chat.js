@@ -927,17 +927,41 @@ async function lookupCatastroDetalleWeb(refCatastral) {
     return parseAndCheck(await res.text(), ref);
   };
 
+  // OVCListaBienes?tipo=ref — búsqueda por referencia, distinto circuito que OVCConCiud,
+  // funciona aunque el inmueble tenga expediente abierto en OVCConCiud
+  const tryListaByRef = async (ref14) => {
+    const rc1 = ref14.slice(0, 7);
+    const rc2 = ref14.slice(7, 14);
+    const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?tipo=ref&rc1=${rc1}&rc2=${rc2}`;
+    const res = await fetch(url, { headers: WEB_HEADERS, signal: AbortSignal.timeout(10000), redirect: "follow" });
+    if (!res.ok) return { _err: `lista-ref HTTP ${res.status}`, _refUrl: url };
+    const html = await res.text();
+    // Intentar extraer m² y uso del HTML de resultados
+    const supSueloMatch =
+      html.match(/[Ss]up(?:erficie)?\s*(?:gr[aá]fica\s*)?(?:de\s*)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]uelo/is) ||
+      html.match(/id="[^"]*[Ss]uelo[^"]*"[^>]*>\s*(\d[\d.,]+)/i);
+    const supConstMatch =
+      html.match(/[Ss]up(?:erficie)?\s*[Cc]onstrui[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/[Cc]onstrui[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is);
+    const usoMatch = html.match(/[Uu]so[^<]{0,50}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+    const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
+    const supConst = supConstMatch?.[1]?.replace(",", ".") ?? null;
+    const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+    return { uso, supSuelo, supConst, _source: "catastro-lista-ref", _refUrl: url };
+  };
+
   try {
     const result = await fetchRef(refCatastral);
     if (result && !result._ovcError) return result;
     // Si la ref de unidad (20 chars) tiene expediente abierto, intentar con ref de parcela (14 chars)
+    const ref14 = refCatastral.length > 14 ? refCatastral.slice(0, 14) : refCatastral;
     if (refCatastral.length > 14) {
-      const parcelRef = refCatastral.slice(0, 14);
-      const retry = await fetchRef(parcelRef);
+      const retry = await fetchRef(ref14);
       if (retry && !retry._ovcError) return retry;
-      return { _err: "OVCErrorDatos_unidad_y_parcela" };
     }
-    return { _err: "OVCErrorDatos" };
+    // Último recurso: OVCListaBienes?tipo=ref — distinto circuito, evita OVCErrorDatos
+    return await tryListaByRef(ref14);
   } catch (e) { return { _err: e.message }; }
 }
 
@@ -1390,10 +1414,11 @@ INSTRUCCIÓN CRÍTICA para cambios:
         if (!detalle) detalle = await lookupCatastroDetalleWeb(refCatastralDirecta);
         normDebug.detalleDirecto = detalle;
         if (detalle) {
-          const fichaRefDirecta = detalle._refUsed ?? refCatastralDirecta;
+          const fichaUrlDirecta = detalle._refUrl
+            ?? `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${detalle._refUsed ?? refCatastralDirecta}`;
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
 Referencia catastral: ${refCatastralDirecta}${detalle.uso ? `\nUso catastral: ${detalle.uso}` : ""}${detalle.supSuelo ? `\nSuperficie suelo: ${detalle.supSuelo} m²` : ""}${detalle.supConst ? `\nSuperficie construida: ${detalle.supConst} m²` : ""}
-Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${fichaRefDirecta}`;
+Enlace ficha: ${fichaUrlDirecta}`;
         } else {
           parcelBlock = `[AVISO SISTEMA — SIN DATOS CATASTRALES]
 No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: no inventes metros cuadrados, uso ni ningún dato de la parcela. Indica al usuario que no se pudo obtener el dato y ofrece el link: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${refCatastralDirecta}`;
@@ -1493,12 +1518,14 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
           const supSuelo  = detalle?.supSuelo ?? null;
           const supConst  = detalle?.supConst ?? null;
           const direccion = catastro.direccion ?? null;
-          // Usar la ref con la que OVCConCiud respondió (puede ser 14-char parcel si la unidad tenía expediente abierto)
-          const fichaRef  = detalle?._refUsed ?? catastro.refCatastral;
+          // _refUrl tiene prioridad (lista por ref, funciona con expediente abierto)
+          // _refUsed es el ref concreto que respondió en OVCConCiud
+          const fichaUrl  = detalle?._refUrl
+            ?? `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${detalle?._refUsed ?? catastro.refCatastral}`;
 
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
 Referencia catastral: ${catastro.refCatastral}${direccion ? `\nDirección registrada: ${direccion}` : ""}${uso ? `\nUso catastral: ${uso}` : ""}${supSuelo ? `\nSuperficie suelo: ${supSuelo} m²` : ""}${supConst ? `\nSuperficie construida: ${supConst} m²` : ""}
-Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${fichaRef}`;
+Enlace ficha: ${fichaUrl}`;
 
           if (grafcan) {
             parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
