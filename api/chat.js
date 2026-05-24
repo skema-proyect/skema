@@ -50,7 +50,13 @@ Responde como consultor experto en normativa urbanística de Gran Canaria.
 Cita artículos, planes y normas específicas cuando sea posible.
 Si hay ambigüedad, indícalo y orienta a la fuente oficial.
 
-DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro ni en ningún visor si ya tienes esos datos aquí — da la respuesta directamente con lo que tienes. Si los datos de planeamiento no están disponibles en el contexto, remite al usuario a visor.grafcan.es (no al SITCAN, que ya no es la fuente oficial).`;
+DATOS DE PARCELA: Si el contexto incluye bloques [DATOS CATASTRALES OFICIALES] o [PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias], úsalos como base de tu respuesta y cita la referencia catastral. NO digas al usuario que busque en el Catastro ni en ningún visor si ya tienes esos datos aquí.
+
+Si el bloque de GRAFCAN contiene URLs de PDFs, inclúyelas en la respuesta como enlaces directos. Explica brevemente qué contiene cada documento: "Plano de edificación" = ordenanzas de altura, retranqueos y edificabilidad; "Zonificación" = clasificación y uso del suelo; "Categoría de suelo" = clase urbanística (urbano, rústico, etc.); "Usos globales" = usos permitidos y prohibidos.
+
+Con esa información, da tu mejor interpretación de los parámetros urbanísticos aplicables según tu conocimiento del planeamiento canario, e indica que el dato vinculante está en los documentos enlazados.
+
+Si los datos de planeamiento no están disponibles, remite a visor.grafcan.es.`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -568,19 +574,47 @@ async function lookupCatastroDetalle(refCatastral) {
 async function lookupGrafcan(xcen, ycen) {
   if (!xcen || !ycen) return null;
 
-  const buf  = 25; // metros — suficiente para centrar la parcela en la imagen 256×256
-  const bbox = `${xcen - buf},${ycen - buf},${xcen + buf},${ycen + buf}`;
-  const url  = `https://idecan1.grafcan.es/ServicioWMS/PlanosOrd?SERVICE=WMS&SRS=EPSG:32628&VERSION=1.1.1&REQUEST=GetFeatureInfo&STYLES=&X=128&Y=128&BBOX=${bbox}&WIDTH=256&HEIGHT=256&QUERY_LAYERS=WMS_PlanosOrd&LAYERS=WMS_PlanosOrd&INFO_FORMAT=text/html`;
+  const buf    = 25;
+  const bbox   = `${xcen - buf},${ycen - buf},${xcen + buf},${ycen + buf}`;
+  // Capas individuales — devuelven links a PDFs del PGOU, no la capa agregada
+  const layers = "EDIF,ZON,CLA,UG,DES";
+  const url    = `https://idecan1.grafcan.es/ServicioWMS/PlanosOrd?SERVICE=WMS&SRS=EPSG:32628&VERSION=1.1.1&REQUEST=GetFeatureInfo&STYLES=&X=128&Y=128&BBOX=${bbox}&WIDTH=256&HEIGHT=256&QUERY_LAYERS=${layers}&LAYERS=${layers}&INFO_FORMAT=text/html`;
 
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const html = await res.text();
 
-    // Extraer texto limpio del HTML
-    const text = html
+    const clean = html
       .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "");
+
+    // Extraer pares label → URL de PDF dividiendo por etiquetas de bloque
+    const sections = clean.split(/<\/(?:tr|p|div|li|dd|td)[^>]*>/i);
+    const pairs = [];
+    const seen  = new Set();
+
+    for (const sec of sections) {
+      const m = sec.match(/href=["']([^"']*\.pdf[^"']*)["']/i);
+      if (!m) continue;
+      const pdfUrl = m[1];
+      if (seen.has(pdfUrl)) continue;
+      seen.add(pdfUrl);
+
+      const label = sec
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&[a-z]+;/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/\bPDF\b/gi, "")
+        .trim().slice(0, 80);
+
+      pairs.push(`${label || "Documento"}: ${pdfUrl}`);
+    }
+
+    if (pairs.length > 0) return { text: pairs.join("\n"), hasPdfs: true };
+
+    // Fallback: texto plano (por si la respuesta no tiene PDFs)
+    const text = clean
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
       .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
