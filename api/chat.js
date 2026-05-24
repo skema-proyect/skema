@@ -661,10 +661,47 @@ async function lookupCatastroDetalle(refCatastral) {
       { signal: AbortSignal.timeout(6000) }
     );
     const xml = await res.text();
-    const luso = xml.match(/<luso>([^<]+)<\/luso>/)?.[1]?.trim();  // uso (Residencial, Industrial…)
-    const stl  = xml.match(/<stl>([^<]+)<\/stl>/)?.[1]?.trim();   // superficie total suelo m²
-    const sfc  = xml.match(/<sfc>([^<]+)<\/sfc>/)?.[1]?.trim();   // superficie construida m²
+    const luso = xml.match(/<luso>([^<]+)<\/luso>/)?.[1]?.trim();
+    const stl  = xml.match(/<stl>([^<]+)<\/stl>/)?.[1]?.trim();
+    const sfc  = xml.match(/<sfc>([^<]+)<\/sfc>/)?.[1]?.trim();
     return luso ? { uso: luso, supSuelo: stl, supConst: sfc } : null;
+  } catch { return null; }
+}
+
+// Detalle por referencia catastral vía scraping OVCConCiud.aspx (fallback si REST bloqueado)
+async function lookupCatastroDetalleWeb(refCatastral) {
+  try {
+    const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${encodeURIComponent(refCatastral)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "es-ES,es;q=0.9",
+      },
+      signal: AbortSignal.timeout(10000),
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // Superficie suelo — busca "suelo" cerca del número
+    const supSueloMatch =
+      html.match(/[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo[^<]{0,80}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/(\d[\d.,]+)\s*m[²2][^<]{0,80}?[Ss]up(?:erficie)?\s*(?:de\s+)?[Ss]uelo/is);
+    const supSuelo = supSueloMatch?.[1]?.replace(",", ".") ?? null;
+
+    // Superficie construida
+    const supConstMatch =
+      html.match(/[Ss]up(?:erficie)?\s*[Cc]onstrui[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is) ||
+      html.match(/[Cc]onstrui[^<]{0,60}?(\d[\d.,]+)\s*m[²2]/is);
+    const supConst = supConstMatch?.[1]?.replace(",", ".") ?? null;
+
+    // Uso
+    const usoMatch = html.match(/[Uu]so\s*(?:catastral)?[^<]{0,40}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+    const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+
+    if (!supSuelo && !uso) return null;
+    return { uso, supSuelo, supConst, _source: "catastro-web-detalle" };
   } catch { return null; }
 }
 
@@ -776,8 +813,10 @@ function detectIntent(message) {
     )
   ) return "sketch";
 
-  if (/\b(normativa|pgou?|ayuntamiento|urbanismo|edificaci|licencia|retranqueo|altura.*máxim|coeficiente|parcela|uso.*suelo|pgm|catálogo|edificabilidad|aprovechamiento|cuantas.*plantas|plantas.*construir|puedo.*construir|construir.*terreno|construir.*solar|suelo.*urban|suelo.*rural|catastro|referencia catastral)\b/i.test(message))
-    return "normativa";
+  if (
+    /\b(normativa|pgou?|ayuntamiento|urbanismo|edificaci|licencia|retranqueo|altura.*máxim|coeficiente|parcela|uso.*suelo|pgm|catálogo|edificabilidad|aprovechamiento|cuantas.*plantas|plantas.*construir|puedo.*construir|construir.*terreno|construir.*solar|suelo.*urban|suelo.*rural|catastro|referencia catastral|metros.*parcela|parcela.*metros|datos.*parcela|parcela.*datos|m[²2].*parcela|solar)\b/i.test(message) ||
+    /\b\d{7}[A-Za-z]{2}\d{4}[A-Za-z]\d{4}[A-Za-z]{2}\b/.test(message)  // referencia catastral directa
+  ) return "normativa";
 
   if (/\b(redacta|escribe un|genera un|elabora un).{0,20}(informe|acta|nota|resumen|documento)/i.test(message))
     return "document";
@@ -1062,8 +1101,8 @@ INSTRUCCIÓN CRÍTICA para cambios:
 
     // ── Normativa ──
     if (intent === "normativa") {
-      // Detectar referencia catastral directa en el mensaje (patrón único de 20 chars)
-      const refCatastralDirecta = lastUser.content.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/)?.[1] ?? null;
+      // Detectar referencia catastral directa en el mensaje — case insensitive
+      const refCatastralDirecta = (lastUser.content.match(/\b(\d{7}[A-Za-z]{2}\d{4}[A-Za-z]\d{4}[A-Za-z]{2})\b/)?.[1] ?? null)?.toUpperCase();
 
       // Check if message likely contains a street address (avoid extra Haiku call otherwise)
       const hasAddressHint = /\b(calle|avda?\.?|avenida|camino|carretera|plaza|c\/|nº|num|número|\bno\b\.?\s*\d|polígono|urb\.?|urbanización)\b|\d{1,4}[,\s]/i.test(lastUser.content);
@@ -1080,15 +1119,17 @@ INSTRUCCIÓN CRÍTICA para cambios:
 
       // Si el usuario escribió una referencia catastral directamente, buscarla en Catastro
       if (refCatastralDirecta && !addr.tiene_direccion) {
-        const [detalle, grafcan] = await Promise.all([
-          lookupCatastroDetalle(refCatastralDirecta),
-          Promise.resolve(null), // sin coords no podemos llamar a GRAFCAN ni Overpass
-        ]);
+        // Intentar REST primero, fallback a scraping web
+        let detalle = await lookupCatastroDetalle(refCatastralDirecta);
+        if (!detalle) detalle = await lookupCatastroDetalleWeb(refCatastralDirecta);
         normDebug.detalleDirecto = detalle;
         if (detalle) {
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
 Referencia catastral: ${refCatastralDirecta}${detalle.uso ? `\nUso catastral: ${detalle.uso}` : ""}${detalle.supSuelo ? `\nSuperficie suelo: ${detalle.supSuelo} m²` : ""}${detalle.supConst ? `\nSuperficie construida: ${detalle.supConst} m²` : ""}
 Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${refCatastralDirecta}`;
+        } else {
+          parcelBlock = `[AVISO SISTEMA — SIN DATOS CATASTRALES]
+No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: no inventes metros cuadrados, uso ni ningún dato de la parcela. Indica al usuario que no se pudo obtener el dato y ofrece el link: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${refCatastralDirecta}`;
         }
       }
 
@@ -1130,19 +1171,26 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
 
         if (catastro?.refCatastral) {
           // Tenemos referencia catastral — detalle + GRAFCAN + Overpass en paralelo
+          // Si el scraping web ya trajo uso/supSuelo lo usamos; si no, intentar REST y luego OVCConCiud
           const webUsoCached = catastro._source === "catastro-web" ? catastro : null;
-          const [detalle, grafcan, entorno] = await Promise.all([
+          const [detalleRest, grafcan, entorno] = await Promise.all([
             webUsoCached ? Promise.resolve(null) : lookupCatastroDetalle(catastro.refCatastral),
             lookupGrafcan(xcen, ycen),
             nominatim ? lookupOverpass(nominatim.lat, nominatim.lon) : Promise.resolve(null),
           ]);
-          normDebug.detalle = detalle ?? webUsoCached;
+          // Si REST falló y no tenemos datos web, intentar scraping OVCConCiud
+          let detalleWeb = null;
+          if (!detalleRest && !webUsoCached?.supSuelo) {
+            detalleWeb = await lookupCatastroDetalleWeb(catastro.refCatastral);
+          }
+          const detalle = detalleRest ?? detalleWeb ?? webUsoCached;
+          normDebug.detalle = detalle;
           normDebug.grafcan = grafcan;
           normDebug.entorno = entorno;
 
-          const uso       = detalle?.uso       ?? webUsoCached?.uso       ?? null;
-          const supSuelo  = detalle?.supSuelo  ?? webUsoCached?.supSuelo  ?? null;
-          const supConst  = detalle?.supConst  ?? null;
+          const uso       = detalle?.uso      ?? null;
+          const supSuelo  = detalle?.supSuelo ?? null;
+          const supConst  = detalle?.supConst ?? null;
           const direccion = catastro.direccion ?? null;
 
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
@@ -1155,16 +1203,25 @@ Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?R
           if (entorno) {
             parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m, misma calle/manzana]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)\nReferencia para parcelas de superficie similar (~${supSuelo ?? "?"} m²): interpretar en función de tipología dominante en la trama.`;
           }
-        } else if (xcen && ycen) {
-          // Sin referencia catastral — GRAFCAN + Overpass con coords de Nominatim
+        } else {
+          // Sin referencia catastral tras todos los intentos
+          // Todavía podemos dar GRAFCAN + Overpass si tenemos coords de Nominatim
           const [grafcan, entorno] = await Promise.all([
-            lookupGrafcan(xcen, ycen),
+            (xcen && ycen) ? lookupGrafcan(xcen, ycen) : Promise.resolve(null),
             nominatim ? lookupOverpass(nominatim.lat, nominatim.lon) : Promise.resolve(null),
           ]);
           normDebug.grafcan = grafcan;
           normDebug.entorno = entorno;
+
+          // Bloquear alucinación: sin referencia, Claude no puede inventar m² ni datos de parcela
+          parcelBlock = `[AVISO SISTEMA — SIN DATOS CATASTRALES]
+No se pudo obtener referencia catastral ni metros cuadrados de Catastro para esta dirección.
+REGLA CRÍTICA: NO inventes metros cuadrados, referencia catastral ni ningún dato físico de la parcela.
+Indica al usuario que no se pudo consultar Catastro y ofrece este link para consulta manual:
+https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
+
           if (grafcan) {
-            parcelBlock = `[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
+            parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
           }
           if (entorno) {
             parcelBlock += `\n\n[ENTORNO INMEDIATO — OpenStreetMap, radio 150m]\nEdificaciones detectadas: ${entorno.summary}\nAltura predominante: ${entorno.dominant} (${entorno.total} edificios mapeados)`;
