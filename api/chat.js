@@ -432,6 +432,65 @@ function wgs84ToUtm28N(lat, lon) {
   return { x: Math.round(x), y: Math.round(y) };
 }
 
+// WGS84 → EPSG:3857 (Web Mercator) — para OVCListaBienes.aspx en www1.sedecatastro.gob.es
+function wgs84ToWebMercator(lat, lon) {
+  const R = 6378137.0;
+  const x = (lon * Math.PI / 180) * R;
+  const y = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2)) * R;
+  return { x: x.toFixed(2), y: y.toFixed(2) };
+}
+
+// Scraping de OVCListaBienes.aspx — host distinto al de la API REST, menos propenso a bloqueo
+async function lookupCatastroWeb(lat, lon) {
+  try {
+    const { x, y } = wgs84ToWebMercator(lat, lon);
+    const url = `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCListaBienes.aspx?origen=Carto&huso=3857&x=${x}&y=${y}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "es-ES,es;q=0.9",
+      },
+      signal: AbortSignal.timeout(10000),
+      redirect: "follow",
+    });
+    if (!res.ok) return { _err: `HTTP ${res.status}` };
+    const html = await res.text();
+
+    // Referencia catastral: 7 dígitos + 2 letras + 4 dígitos + 1 letra + 4 dígitos + 2 letras = 20 chars
+    const refMatch = html.match(/\b(\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2})\b/);
+    if (!refMatch) return { _err: "refCatastral no encontrada en HTML" };
+    const refCatastral = refMatch[1];
+
+    // Dirección — busca el link a OVCConCiud o el texto dirección en la tabla
+    const dirMatch = html.match(/OVCConCiud\.aspx[^"']*["'][^>]*>([^<]{8,120})/i) ||
+                     html.match(/(?:Direccion|Direcci[oó]n|Localizaci[oó]n)[^:]{0,5}:[^<]{0,5}<[^>]+>([^<]{8,100})/i);
+    const direccion = dirMatch ? dirMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+
+    // Uso del suelo — Catastro pone el uso en celdas después de "Uso" en la tabla
+    const usoMatch = html.match(/[Uu]so\s*(?:catastral)?[^<]{0,30}<[^>]+>\s*([A-ZÁÉÍÓÚ][^<]{3,100})/);
+    const uso = usoMatch ? usoMatch[1].replace(/&[a-z]+;/gi, " ").trim() : null;
+
+    // Superficie suelo — primer número seguido de m² o m2
+    const supMatches = [...html.matchAll(/(\d[\d.,]*)\s*m[²2]/gi)];
+    const supSuelo = supMatches.length > 0 ? supMatches[0][1].replace(",", ".") : null;
+
+    // Coords UTM en la página (Catastro las incluye a veces en atributos data o meta)
+    const xcenMatch = html.match(/xcen[^0-9]{0,10}([4-6]\d{5}(?:\.\d+)?)/i);
+    const ycenMatch = html.match(/ycen[^0-9]{0,10}(3\d{6}(?:\.\d+)?)/i);
+
+    return {
+      refCatastral,
+      xcen:      xcenMatch ? parseFloat(xcenMatch[1]) : null,
+      ycen:      ycenMatch ? parseFloat(ycenMatch[1]) : null,
+      direccion,
+      uso,
+      supSuelo,
+      _source: "catastro-web",
+    };
+  } catch (e) { return { _err: e.message }; }
+}
+
 // Geocodifica una dirección vía Nominatim (OpenStreetMap) → {lat, lon} WGS84
 async function geocodeNominatim(addr) {
   try {
@@ -969,12 +1028,19 @@ INSTRUCCIÓN CRÍTICA para cambios:
         normDebug.catastro  = parcel;
         normDebug.nominatim = nominatim;
 
-        // Si Catastro por dirección falló pero tenemos coords de Nominatim → intentar por coords
+        // Si Catastro por dirección falló pero tenemos coords de Nominatim → intentar por coords (REST)
         let catastro = parcel;
         if (!parcel?.refCatastral && nominatim) {
           const byCoords = await lookupCatastroByCoords(nominatim.lat, nominatim.lon);
           normDebug.catastroByCoords = byCoords;
           if (byCoords?.refCatastral) catastro = byCoords;
+        }
+
+        // Si la API REST sigue bloqueada, intentar scraping de www1.sedecatastro.gob.es
+        if (!catastro?.refCatastral && nominatim) {
+          const webData = await lookupCatastroWeb(nominatim.lat, nominatim.lon);
+          normDebug.catastroWeb = webData;
+          if (webData?.refCatastral) catastro = webData;
         }
 
         // Coordenadas UTM: prioridad Catastro; fallback Nominatim → UTM
@@ -986,24 +1052,27 @@ INSTRUCCIÓN CRÍTICA para cambios:
           ycen = utm.y;
           normDebug.coordSource = "nominatim→utm";
         } else if (xcen && ycen) {
-          normDebug.coordSource = catastro === parcel ? "catastro" : "catastro-por-coords";
+          normDebug.coordSource = catastro?._source ?? (catastro === parcel ? "catastro" : "catastro-por-coords");
         }
 
         if (catastro?.refCatastral) {
           // Tenemos referencia catastral — detalle + GRAFCAN en paralelo
+          // Si el catastro ya vino del web scraping, puede que ya traiga uso/supSuelo
+          const webUsoCached = catastro._source === "catastro-web" ? catastro : null;
           const [detalle, grafcan] = await Promise.all([
-            lookupCatastroDetalle(catastro.refCatastral),
+            webUsoCached ? Promise.resolve(null) : lookupCatastroDetalle(catastro.refCatastral),
             lookupGrafcan(xcen, ycen),
           ]);
-          normDebug.detalle = detalle;
+          normDebug.detalle = detalle ?? webUsoCached;
           normDebug.grafcan = grafcan;
 
+          const uso       = detalle?.uso       ?? webUsoCached?.uso       ?? null;
+          const supSuelo  = detalle?.supSuelo  ?? webUsoCached?.supSuelo  ?? null;
+          const supConst  = detalle?.supConst  ?? null;
+          const direccion = catastro.direccion ?? null;
+
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
-Referencia catastral: ${catastro.refCatastral}
-Dirección registrada: ${catastro.direccion}${detalle ? `
-Uso catastral: ${detalle.uso ?? "–"}
-Superficie suelo: ${detalle.supSuelo ? detalle.supSuelo + " m²" : "–"}
-Superficie construida: ${detalle.supConst ? detalle.supConst + " m²" : "–"}` : ""}
+Referencia catastral: ${catastro.refCatastral}${direccion ? `\nDirección registrada: ${direccion}` : ""}${uso ? `\nUso catastral: ${uso}` : ""}${supSuelo ? `\nSuperficie suelo: ${supSuelo} m²` : ""}${supConst ? `\nSuperficie construida: ${supConst} m²` : ""}
 Enlace ficha: https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${catastro.refCatastral}`;
 
           if (grafcan) {
