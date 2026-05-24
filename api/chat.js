@@ -69,7 +69,13 @@ Si no hay datos de entorno, usa tu conocimiento de la trama urbana del municipio
 Si hay links de GRAFCAN, uno por línea con una frase que explique qué regula cada documento.
 Si no hay links, indica qué documento habría que pedir y a quién (cédula urbanística en el Ayuntamiento de X).
 
-DATOS: Si el contexto incluye [DATOS CATASTRALES OFICIALES], [PLANEAMIENTO URBANÍSTICO — GRAFCAN] o [ENTORNO INMEDIATO], úsalos. No digas al usuario que busque en ningún visor si ya tienes los datos.`;
+DATOS: Si el contexto incluye [DATOS CATASTRALES OFICIALES], [PLANEAMIENTO URBANÍSTICO — GRAFCAN] o [ENTORNO INMEDIATO], úsalos. No digas al usuario que busque en ningún visor si ya tienes los datos.
+
+M² PROPORCIONADOS POR EL USUARIO: Si en el mensaje o en el historial el usuario indica los m² de la parcela (ej: "son 120 metros", "la parcela tiene 150m²", "mide 200 m²"), úsalos como dato real para calcular:
+- Edificabilidad total = m² parcela × coeficiente del PGOU estimado para esa zona
+- Número de plantas compatible según esa superficie y la tipología dominante
+- Da el resultado con convicción: "con 120m² y un coeficiente estimado de 2,5, tienes ~300m² construibles, compatible con PB+3"
+Indica siempre que es una estimación no oficial basada en los datos aportados.`;
 
 const DOCUMENT_SYSTEM = `${SYSTEM}
 
@@ -1190,11 +1196,13 @@ export default async function handler(req, res) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
 
-  // Si la conversación ya tiene sketch o document, mantenemos el modo
-  const isSketchConversation   = messages.some(m => m.tool === "sketch");
-  const isDocumentConversation = messages.some(m => m.tool === "document");
-  let intent = isSketchConversation   ? "sketch"
-             : isDocumentConversation ? "document"
+  // Si la conversación ya tiene sketch, document o normativa, mantenemos el modo
+  const isSketchConversation    = messages.some(m => m.tool === "sketch");
+  const isDocumentConversation  = messages.some(m => m.tool === "document");
+  const isNormativaConversation = messages.some(m => m.tool === "normativa");
+  let intent = isSketchConversation    ? "sketch"
+             : isDocumentConversation  ? "document"
+             : isNormativaConversation ? "normativa"
              : detectIntent(lastUser.content);
 
   // Si ya había interacción de agenda Y el usuario da detalles (fecha/hora/título), mantener en agenda
@@ -1551,8 +1559,8 @@ No se pudo consultar Catastro para la referencia ${refCatastralDirecta}. REGLA: 
             ?? `https://www1.sedecatastro.gob.es/CYCBienInmueble/OVCConCiud.aspx?RefC=${detalle?._refUsed ?? catastro.refCatastral}`;
 
           parcelBlock = `[DATOS CATASTRALES OFICIALES — Sede Electrónica del Catastro]
-Referencia catastral: ${catastro.refCatastral}${direccion ? `\nDirección registrada: ${direccion}` : ""}${uso ? `\nUso catastral: ${uso}` : ""}${supSuelo ? `\nSuperficie suelo: ${supSuelo} m²` : ""}${supConst ? `\nSuperficie construida: ${supConst} m²` : ""}
-Enlace ficha: ${fichaUrl}`;
+Referencia catastral: ${catastro.refCatastral}${direccion ? `\nDirección registrada: ${direccion}` : ""}${uso ? `\nUso catastral: ${uso}` : ""}${supSuelo ? `\nSuperficie suelo: ${supSuelo} m²` : "\nSuperficie suelo: no disponible automáticamente"}${supConst ? `\nSuperficie construida: ${supConst} m²` : ""}
+Enlace ficha: ${fichaUrl}${!supSuelo ? `\n\n[INSTRUCCIÓN SISTEMA] Los m² no están disponibles automáticamente. En la sección Parcela de tu respuesta, incluye esta frase exacta después del enlace: "Para afinar la estimación de plantas y edificabilidad, abre la ficha, busca la superficie del solar y dímela." Cuando el usuario la proporcione, úsala para calcular edificabilidad y plantas según las reglas de M² PROPORCIONADOS POR EL USUARIO.` : ""}`;
 
           if (grafcan) {
             parcelBlock += `\n\n[PLANEAMIENTO URBANÍSTICO — GRAFCAN / Gobierno de Canarias]\n${grafcan.text}`;
