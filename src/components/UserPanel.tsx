@@ -113,6 +113,13 @@ export default function UserPanel({ onClose }: { onClose: () => void }) {
         <PanelSection label="Ajustes">
           <PanelItem>
             <p className="text-[12px] text-s-muted">SKEMA v0.1</p>
+            <p className="text-[11px] text-s-muted/60 mt-1">
+              Desarrollado por{" "}
+              <a href="https://www.ai-connect.es" target="_blank" rel="noopener noreferrer"
+                className="hover:text-s-muted transition-colors">
+                AI-CONNECT
+              </a>
+            </p>
           </PanelItem>
         </PanelSection>
 
