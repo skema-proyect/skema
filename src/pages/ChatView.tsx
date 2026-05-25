@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { conversations as convsDB, projects as projectsDB, events as eventsDB, notes as notesDB, uid, now } from "@/lib/db";
 import { SERVICES } from "@/constants/services";
 import { useAuth } from "@/lib/auth";
+import FloorPlanCard from "@/components/FloorPlanCard";
 import { downloadPDF, downloadWord, downloadCSV, hasTable, extractDocTitle } from "@/lib/docExport";
 import type { Message, Project } from "@/types";
 
@@ -143,6 +144,9 @@ export default function ChatView() {
 
     const history = withUser.map(m => ({ role: m.role, content: m.content, tool: m.tool }));
 
+    // Pass existing planId if there's a floorplan in this conversation
+    const existingPlanMsg = [...withUser].reverse().find(m => m.floorPlan?.planId);
+
     try {
       const res  = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -151,6 +155,9 @@ export default function ChatView() {
           projectInstructions: projectInstructions ?? undefined,
           userInstructions: profile?.instructions ?? undefined,
           today: new Date().toISOString().split("T")[0],
+          conversationId: convId,
+          userId: profile?.id ?? undefined,
+          existingPlanId: existingPlanMsg?.floorPlan?.planId ?? undefined,
           ...(currentFile ? { attachedFile: { name: currentFile.name, mediaType: currentFile.mediaType, base64: currentFile.base64 } } : {}),
         }),
       });
@@ -164,6 +171,7 @@ export default function ChatView() {
         model:   data.model,
         svg:     data.svg,
         timestamp: now(),
+        ...(data.planId ? { floorPlan: { planId: data.planId, version: data.version ?? 1 } } : {}),
       };
       const withAssistant = [...withUser, assistantMsg];
       setMessages(withAssistant);
@@ -715,7 +723,10 @@ function MessageBubble({ message: m, onDownloadSVG, convId, bump }: {
             <StickyNote size={13} /> Guardado en notas
           </div>
         )}
-        {m.svg && (
+        {m.svg && m.floorPlan && (
+          <FloorPlanCard svg={m.svg} planId={m.floorPlan.planId} version={m.floorPlan.version} />
+        )}
+        {m.svg && !m.floorPlan && (
           <div className="border border-s-border rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-s-border bg-s-surface">
               <span className="text-[11px] text-s-muted uppercase tracking-wider">Plano esquemático</span>

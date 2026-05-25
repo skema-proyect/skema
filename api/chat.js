@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import { runFloorPlanPipeline } from "./lib/floorplan-pipeline.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -107,219 +108,6 @@ Pregunta exactamente esto, sin añadir nada más:
 "¿Lo descargamos o lo guardamos? Para descarga: PDF, Word o Excel (si hay tablas). Para guardar: en Notas o en un Proyecto."`;
 
 
-// Sketch conversation — discuss changes in text, no generation
-const SKETCH_CHAT_SYSTEM = `Eres un arquitecto experto trabajando con un cliente en la definición de un plano de planta.
-
-TU ROL:
-- Escucha y confirma con tus palabras lo que pide el usuario
-- Si hay varios cambios, analiza si son compatibles entre sí y señala conflictos si los hay
-- Si algo es ambiguo, pregunta antes de asumir
-- Cuando tengáis todo claro, ofrece generar el plano
-
-REGLA CRÍTICA SOBRE GENERACIÓN:
-- Tú NO generas SVG, código ni planos. Eso lo hace otro sistema cuando recibe la señal.
-- Si el usuario te pide que generes o dice que puedes hacerlo, respóndele: "Perfecto, lo lanzo ahora." y añade [GENERATE] al final.
-- Si el usuario confirma con "sí", "ok", "dale", "venga", "perfecto", "adelante" u otra confirmación positiva después de que hayas ofrecido generarlo, responde brevemente y añade [GENERATE] al final.
-
-CUÁNDO AÑADIR [GENERATE]:
-- Usuario confirma cambios y da luz verde → [GENERATE]
-- Usuario dice explícitamente que quieres el plano → [GENERATE]
-- En cualquier otra situación → NO añadas [GENERATE], solo habla
-
-Tono: directo, profesional, como un arquitecto en reunión. Sin muletillas.`;
-
-// Phase 1: architect produces a JSON layout spec
-const ARCHITECT_SYSTEM = `Eres un arquitecto y delineante experto en vivienda. Tu única función en esta conversación es generar y refinar distribuciones en planta.
-
-REGLA ABSOLUTA: SIEMPRE respondes con los dos bloques [TEXTO] y [JSON]. Nunca te niegas, nunca dices que no puedes. Si falta información, asumes valores estándar y lo explicas.
-
-Si el historial tiene un plano anterior, lee qué se construyó, aplica los cambios pedidos, y genera el plano actualizado.
-Si es el primer plano, interpreta el encargo y propón la mejor distribución posible.
-
-CRITERIOS DE DISEÑO:
-- CTE: dormitorio simple ≥ 6m², doble ≥ 10m², salón ≥ 14m², cocina ≥ 5m², baño ≥ 3m²
-- Las rooms forman un rectángulo total sin huecos ni solapamientos (como un puzzle)
-- Accesos lógicos: entrada → pasillo → habitaciones; nunca pasar por dormitorios para llegar a otros
-- Zonas día al sur/este, servicio al norte
-- Proporciones: ratio largo/ancho entre 1:1 y 1:2
-- Todas las medidas con un decimal máximo
-
-FORMATO DE RESPUESTA — exactamente estos dos bloques:
-
-[TEXTO]
-2-3 frases explicando la distribución y cambios aplicados.
-[/TEXTO]
-
-[JSON]
-{
-  "title": "Nombre del proyecto",
-  "width": 10.0,
-  "height": 8.0,
-  "rooms": [
-    {
-      "name": "Salon-Comedor",
-      "x": 0.0, "y": 0.0, "w": 7.0, "h": 3.5,
-      "area": 24.5,
-      "doors": ["W:0.5:0.9"],
-      "windows": ["S:2.0:1.2"]
-    }
-  ]
-}
-[/JSON]
-
-FORMATO doors/windows: "PARED:inicio_m:ancho_m"
-PARED: N=arriba S=abajo E=derecha W=izquierda
-inicio_m: distancia desde esquina más cercana (mínimo 0.2m del extremo)
-VERIFICACIÓN OBLIGATORIA antes de escribir el JSON: suma de áreas de rooms ≈ width × height (tolerancia muros ±10%)
-Cada room ocupa su posición exacta: x+w ≤ width, y+h ≤ height, sin solapamientos.`;
-
-// SVG generator — JavaScript calculates all coordinates (no AI arithmetic)
-function buildFloorPlanSVG(spec) {
-  const CW = 900, CH = 640;
-  const ML = 110, MT = 80, MR = 90, MB = 110;
-  const DW = CW - ML - MR, DH = CH - MT - MB;
-
-  const scale = Math.min(DW / spec.width, DH / spec.height);
-  const X = m => ML + m * scale;
-  const Y = m => MT + m * scale;
-  const S = m => m * scale;
-
-  const EXT = 9, INT = 3;
-
-  const COLORS = [
-    '#e8edf5','#e8f0ea','#f5ece8','#ece8f5',
-    '#e8f5f0','#f5f0e8','#f0e8f5','#f5f5e8','#e8f5ec',
-  ];
-
-  function sa(str) {
-    return String(str)
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/\u00f1/g,'n').replace(/\u00d1/g,'N');
-  }
-
-  const p = [];
-  const push = s => p.push(s);
-
-  push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" style="background:white">`);
-  push(`<defs><style>text{font-family:Arial,Helvetica,sans-serif}</style></defs>`);
-
-  // Exterior wall
-  push(`<rect x="${X(0)-EXT}" y="${Y(0)-EXT}" width="${S(spec.width)+EXT*2}" height="${S(spec.height)+EXT*2}" fill="#1a1a1a"/>`);
-  push(`<rect x="${X(0)}" y="${Y(0)}" width="${S(spec.width)}" height="${S(spec.height)}" fill="white"/>`);
-
-  // Rooms
-  spec.rooms.forEach((r, i) => {
-    const rx = X(r.x), ry = Y(r.y), rw = S(r.w), rh = S(r.h);
-    const color = COLORS[i % COLORS.length];
-    push(`<rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${rw.toFixed(1)}" height="${rh.toFixed(1)}" fill="${color}" stroke="#444" stroke-width="${INT}"/>`);
-
-    const cx = (rx + rw / 2).toFixed(1);
-    const cy = (ry + rh / 2).toFixed(1);
-    const area = r.area != null ? Number(r.area).toFixed(1) : (r.w * r.h).toFixed(1);
-    push(`<text x="${cx}" y="${+cy - 6}" font-size="11" text-anchor="middle" fill="#111" font-weight="600">${sa(r.name)}</text>`);
-    push(`<text x="${cx}" y="${+cy + 9}" font-size="9" text-anchor="middle" fill="#555">${area} m\u00B2</text>`);
-  });
-
-  // Doors
-  spec.rooms.forEach(r => {
-    (r.doors || []).forEach(d => {
-      const [wall, posS, wS] = d.split(':');
-      const pos = parseFloat(posS), dw = parseFloat(wS);
-      const dpx = S(dw);
-      const W_WALL = wall.toUpperCase();
-
-      if (W_WALL === 'N' || W_WALL === 'S') {
-        const wy = W_WALL === 'N' ? Y(r.y) : Y(r.y + r.h);
-        const dx = X(r.x + pos);
-        push(`<rect x="${dx}" y="${wy - EXT - 2}" width="${dpx}" height="${EXT * 2 + 4}" fill="white" stroke="none"/>`);
-        const leafY = W_WALL === 'N' ? wy + dpx : wy - dpx;
-        push(`<line x1="${dx}" y1="${wy}" x2="${dx}" y2="${leafY}" stroke="#1a1a1a" stroke-width="1.5"/>`);
-        const sf = W_WALL === 'N' ? 1 : 0;
-        push(`<path d="M ${(dx + dpx).toFixed(1)},${wy} A ${dpx},${dpx} 0 0,${sf} ${dx},${leafY}" fill="none" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="4,3"/>`);
-      } else {
-        const wx = W_WALL === 'W' ? X(r.x) : X(r.x + r.w);
-        const dy = Y(r.y + pos);
-        push(`<rect x="${wx - EXT - 2}" y="${dy}" width="${EXT * 2 + 4}" height="${dpx}" fill="white" stroke="none"/>`);
-        const leafX = W_WALL === 'W' ? wx + dpx : wx - dpx;
-        push(`<line x1="${wx}" y1="${dy}" x2="${leafX}" y2="${dy}" stroke="#1a1a1a" stroke-width="1.5"/>`);
-        const sf = W_WALL === 'W' ? 0 : 1;
-        push(`<path d="M ${wx},${(dy + dpx).toFixed(1)} A ${dpx},${dpx} 0 0,${sf} ${leafX},${dy}" fill="none" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="4,3"/>`);
-      }
-    });
-  });
-
-  // Windows
-  spec.rooms.forEach(r => {
-    (r.windows || []).forEach(w => {
-      const [wall, posS, wS] = w.split(':');
-      const pos = parseFloat(posS), ww = parseFloat(wS);
-      const wpx = S(ww);
-      const W_WALL = wall.toUpperCase();
-
-      if (W_WALL === 'N' || W_WALL === 'S') {
-        const wy = W_WALL === 'N' ? Y(r.y) : Y(r.y + r.h);
-        const wx = X(r.x + pos);
-        push(`<rect x="${wx}" y="${wy - EXT - 1}" width="${wpx}" height="${EXT * 2 + 2}" fill="white" stroke="none"/>`);
-        push(`<rect x="${wx}" y="${wy - EXT}" width="${wpx}" height="${EXT * 2}" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>`);
-        const t = wpx / 3;
-        for (let k = 0; k < 3; k++) {
-          const lx = wx + t * k + t / 2;
-          push(`<line x1="${lx.toFixed(1)}" y1="${wy - EXT + 2}" x2="${lx.toFixed(1)}" y2="${wy + EXT - 2}" stroke="#333" stroke-width="1"/>`);
-        }
-      } else {
-        const wx = W_WALL === 'W' ? X(r.x) : X(r.x + r.w);
-        const wy = Y(r.y + pos);
-        push(`<rect x="${wx - EXT - 1}" y="${wy}" width="${EXT * 2 + 2}" height="${wpx}" fill="white" stroke="none"/>`);
-        push(`<rect x="${wx - EXT}" y="${wy}" width="${EXT * 2}" height="${wpx}" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>`);
-        const t = wpx / 3;
-        for (let k = 0; k < 3; k++) {
-          const ly = wy + t * k + t / 2;
-          push(`<line x1="${wx - EXT + 2}" y1="${ly.toFixed(1)}" x2="${wx + EXT - 2}" y2="${ly.toFixed(1)}" stroke="#333" stroke-width="1"/>`);
-        }
-      }
-    });
-  });
-
-  // Dimension — total width (bottom)
-  const dimY = Y(spec.height) + EXT + 32;
-  const x0 = X(0), xW = X(spec.width);
-  push(`<line x1="${x0}" y1="${dimY}" x2="${xW}" y2="${dimY}" stroke="#666" stroke-width="0.8"/>`);
-  push(`<line x1="${x0}" y1="${dimY - 5}" x2="${x0}" y2="${dimY + 5}" stroke="#666" stroke-width="1"/>`);
-  push(`<line x1="${xW}" y1="${dimY - 5}" x2="${xW}" y2="${dimY + 5}" stroke="#666" stroke-width="1"/>`);
-  push(`<text x="${((x0 + xW) / 2).toFixed(1)}" y="${dimY + 13}" font-size="10" text-anchor="middle" fill="#444">${spec.width.toFixed(2)}m</text>`);
-
-  // Dimension — total height (right)
-  const dimX = X(spec.width) + EXT + 32;
-  const y0 = Y(0), yH = Y(spec.height);
-  push(`<line x1="${dimX}" y1="${y0}" x2="${dimX}" y2="${yH}" stroke="#666" stroke-width="0.8"/>`);
-  push(`<line x1="${dimX - 5}" y1="${y0}" x2="${dimX + 5}" y2="${y0}" stroke="#666" stroke-width="1"/>`);
-  push(`<line x1="${dimX - 5}" y1="${yH}" x2="${dimX + 5}" y2="${yH}" stroke="#666" stroke-width="1"/>`);
-  const dimMY = ((y0 + yH) / 2).toFixed(1);
-  push(`<text x="${dimX + 14}" y="${dimMY}" font-size="10" text-anchor="middle" fill="#444" transform="rotate(-90 ${dimX + 14} ${dimMY})">${spec.height.toFixed(2)}m</text>`);
-
-  // North arrow
-  const NA = CW - 50, NAy = 55;
-  push(`<circle cx="${NA}" cy="${NAy}" r="14" fill="none" stroke="#111" stroke-width="1.2"/>`);
-  push(`<polygon points="${NA},${NAy - 11} ${NA - 5},${NAy + 9} ${NA},${NAy + 5} ${NA + 5},${NAy + 9}" fill="#111"/>`);
-  push(`<text x="${NA}" y="${NAy - 18}" font-size="10" text-anchor="middle" fill="#111" font-weight="bold">N</text>`);
-
-  // Title block
-  const TBx = CW - 220, TBy = CH - 72, TBw = 210, TBh = 62;
-  const scaleVal = Math.round(1000 / scale);
-  const today = new Date();
-  const dd = String(today.getDate()).padStart(2,'0');
-  const mm = String(today.getMonth()+1).padStart(2,'0');
-  const yyyy = today.getFullYear();
-  push(`<rect x="${TBx}" y="${TBy}" width="${TBw}" height="${TBh}" fill="white" stroke="#333" stroke-width="0.8"/>`);
-  push(`<line x1="${TBx}" y1="${TBy + 22}" x2="${TBx + TBw}" y2="${TBy + 22}" stroke="#333" stroke-width="0.5"/>`);
-  push(`<line x1="${TBx}" y1="${TBy + 42}" x2="${TBx + TBw}" y2="${TBy + 42}" stroke="#333" stroke-width="0.5"/>`);
-  push(`<text x="${TBx + TBw/2}" y="${TBy + 15}" font-size="9" text-anchor="middle" fill="#111" font-weight="bold">${sa(spec.title || 'Plano de vivienda')}</text>`);
-  push(`<text x="${TBx + TBw/2}" y="${TBy + 35}" font-size="8" text-anchor="middle" fill="#333">Planta baja  |  Esc. 1:${scaleVal}</text>`);
-  push(`<text x="${TBx + TBw/2}" y="${TBy + 55}" font-size="8" text-anchor="middle" fill="#555">${dd}/${mm}/${yyyy}</text>`);
-
-  push(`</svg>`);
-  return p.join('\n');
-}
 
 
 
@@ -1128,9 +916,9 @@ function detectIntent(message) {
   if (
     /\b(plano|planta|croquis|esquema)\b/i.test(message) && (
       /\d+\s*[x×]\s*\d+|\d+\s*(m[²2]?|metro|cm)/i.test(message) ||
-      /\b(genera|crea|haz|dibuja|actualiza|modifica|cambia|regenera|nuevo|siguiente|ahora)\b/i.test(message)
+      /\b(genera|crea|haz|dibuja|actualiza|modifica|cambia|regenera|nuevo|siguiente|ahora|dormitorio|habitaci)\b/i.test(message)
     )
-  ) return "sketch";
+  ) return "floorplan";
 
   if (
     /\b(normativa|pgou?|ayuntamiento|urbanismo|edificaci|licencia|retranqueo|altura.*máxim|coeficiente|parcela|uso.*suelo|pgm|catálogo|edificabilidad|aprovechamiento|cuantas.*plantas|plantas.*construir|puedo.*construir|construir.*terreno|construir.*solar|suelo.*urban|suelo.*rural|catastro|referencia catastral|metros.*parcela|parcela.*metros|datos.*parcela|parcela.*datos|m[²2].*parcela|solar)\b/i.test(message) ||
@@ -1298,7 +1086,7 @@ async function buildFileBlocks(name, mediaType, base64) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [], projectInstructions, userInstructions, today, attachedFile } = req.body;
+  const { messages = [], projectInstructions, userInstructions, today, attachedFile, conversationId, userId, existingPlanId } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
 
   const userContext = userInstructions?.trim()
@@ -1317,11 +1105,11 @@ export default async function handler(req, res) {
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   if (!lastUser) return res.status(400).json({ error: "Sin mensaje de usuario" });
 
-  // Si la conversación ya tiene sketch, document o normativa, mantenemos el modo
-  const isSketchConversation    = messages.some(m => m.tool === "sketch");
+  // Mantener el modo si la conversación ya empezó en un modo concreto
+  const isFloorPlanConversation = messages.some(m => m.tool === "sketch" || m.tool === "floorplan");
   const isDocumentConversation  = messages.some(m => m.tool === "document");
   const isNormativaConversation = messages.some(m => m.tool === "normativa");
-  let intent = isSketchConversation    ? "sketch"
+  let intent = isFloorPlanConversation ? "floorplan"
              : isDocumentConversation  ? "document"
              : isNormativaConversation ? "normativa"
              : detectIntent(lastUser.content);
@@ -1465,108 +1253,30 @@ Si no hay contenido suficiente:
       });
     }
 
-    // ── Sketch (architect → JSON → JS renders SVG) ──
-    if (intent === "sketch") {
-      // Extract the LATEST spec from history (ignore older ones)
-      const allSpecs = history
-        .filter(m => m.role === "assistant" && !Array.isArray(m.content) && m.content?.includes("<!--SPEC:"))
-        .map(m => m.content?.match(/<!--SPEC:([\s\S]*?)-->/)?.[1]?.trim())
-        .filter(Boolean);
-      const prevSpecJSON = allSpecs[allSpecs.length - 1] ?? null;
-
-      // Clean history — strip ALL spec comments to prevent context pollution
-      const cleanHistory = history.map(m => ({
-        role: m.role,
-        content: Array.isArray(m.content)
-          ? m.content  // multimodal block — leave as-is
-          : (m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim(),
-      }));
-
-      // ── Decision: discuss or generate? ──
-      // If there's already a plan AND the user isn't explicitly asking to generate → discuss in text
-      const GENERATE_TRIGGER = /\b(genera|aplica|hazlo|dibuja|dale|venga|adelante|muéstrame|crea|actualiza|sí genera|ok genera|sí aplica|ok aplica|confirmo|ejecuta)\b/i;
-      const hasExistingPlan = prevSpecJSON !== null;
-
-      if (hasExistingPlan && !GENERATE_TRIGGER.test(lastUser.content)) {
-        const discussMsg = await client.messages.create({
-          model: MODELS.smart, max_tokens: 500,
-          system: SKETCH_CHAT_SYSTEM + userContext + projectContext,
-          messages: cleanHistory,
-        });
-        const discussText = discussMsg.content[0]?.text ?? "";
-
-        // If the discussion model decided it's time to generate, fall through to pipeline
-        if (!discussText.includes("[GENERATE]")) {
-          return res.json({
-            content: discussText,
-            tool: "chat", model: MODELS.smart,
-          });
-        }
-        // Strip the marker from the displayed text and continue to generation below
-        // (fall through with cleanHistory and prevSpecJSON already set)
-      }
-
-      // Build architect system — inject last spec cleanly
-      const archSystem = prevSpecJSON
-        ? `${ARCHITECT_SYSTEM}
-
-═══ PLANO ACTUAL EN PANTALLA ═══
-${prevSpecJSON}
-═══════════════════════════════
-
-INSTRUCCIÓN CRÍTICA para cambios:
-1. Lee el último mensaje del usuario e identifica EXACTAMENTE qué quiere cambiar
-2. Lista internamente cada cambio antes de aplicarlo
-3. Aplica cada cambio verificando que no rompe las dimensiones totales ni crea solapamientos
-4. Todo lo que el usuario NO mencionó queda IDÉNTICO al JSON de arriba
-5. No añadas ni quites habitaciones salvo que se pida explícitamente`
-        : ARCHITECT_SYSTEM;
-
-      // When refining an existing plan, only send the last 6 messages to the architect
-      // — avoids confusion between old change rounds and the current request
-      const archHistory = prevSpecJSON ? cleanHistory.slice(-6) : cleanHistory;
-
-      const archMsg = await client.messages.create({
-        model: MODELS.smart, max_tokens: 1500,
-        system: archSystem,
-        messages: archHistory,
+    // ── Floorplan (LLM requirements → solver → SVG) ──
+    if (intent === "floorplan") {
+      const result = await runFloorPlanPipeline({
+        messages: history,
+        conversationId: conversationId ?? null,
+        userId:         userId ?? null,
+        existingPlanId: existingPlanId ?? null,
       });
-      const archResponse = archMsg.content[0]?.text ?? "";
 
-      // Extract user-facing text
-      const textMatch = archResponse.match(/\[TEXTO\]([\s\S]*?)\[\/TEXTO\]/i);
-      const userText  = textMatch ? textMatch[1].trim() : "";
-
-      // Extract JSON spec
-      const jsonMatch = archResponse.match(/\[JSON\]([\s\S]*?)\[\/JSON\]/i);
-      if (!jsonMatch) {
-        return res.json({
-          content: userText || "No pude generar la distribución. Intenta con más detalle (m², número de habitaciones, dimensiones).",
-          tool: "chat", model: MODELS.smart,
-        });
+      if (!result.ok) {
+        return res.json({ content: result.ask, tool: "chat", model: MODELS.smart });
       }
 
-      let spec;
-      try {
-        spec = JSON.parse(jsonMatch[1].trim());
-      } catch {
-        return res.json({
-          content: userText || "Error procesando la distribución. Intenta de nuevo.",
-          tool: "chat", model: MODELS.smart,
-        });
-      }
-
-      const svg = buildFloorPlanSVG(spec);
-      // Embed spec as hidden HTML comment so future calls can recover it
-      const specComment = `<!--SPEC:${JSON.stringify(spec)}-->`;
       return res.json({
-        content: `${userText || "Aquí tienes el plano:"}\n\n${specComment}`,
-        tool: "sketch", model: MODELS.smart,
-        svg,
+        content: result.notes,
+        tool:    "floorplan",
+        model:   MODELS.smart,
+        svg:     result.svg,
+        planId:  result.planId,
+        version: result.version,
       });
     }
 
-    // ── Normativa ──
+        // ── Normativa ──
     if (intent === "normativa") {
       // Detectar referencia catastral directa en el mensaje — case insensitive
       const refCatastralDirecta = (lastUser.content.match(/\b(\d{7}[A-Za-z]{2}\d{4}[A-Za-z]\d{4}[A-Za-z]{2})\b/)?.[1] ?? null)?.toUpperCase();

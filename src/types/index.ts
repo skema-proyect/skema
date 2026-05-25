@@ -9,11 +9,12 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  tool?: "chat" | "sketch" | "normativa" | "document" | "research" | "search" | "agenda" | "nota";
+  tool?: "chat" | "sketch" | "floorplan" | "normativa" | "document" | "research" | "search" | "agenda" | "nota";
   model?: string;
   svg?: string;
   timestamp: string;
   attachment?: { name: string; mediaType: string };
+  floorPlan?: { planId: string; version: number };
 }
 
 export interface Conversation {
