@@ -226,8 +226,9 @@ export default function ChatView() {
 
   const hour = new Date().getHours();
   const timeGreeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
-  const userName = profile?.name ?? localStorage.getItem("skema_user_name");
-  const greeting = userName ? `${timeGreeting}, ${userName}` : timeGreeting;
+  const fullName = profile?.name ?? localStorage.getItem("skema_user_name");
+  const firstName = fullName?.split(" ")[0] ?? null;
+  const greeting = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
 
   return (
     <div className="relative flex flex-col h-full bg-s-bg">
