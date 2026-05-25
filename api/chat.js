@@ -1178,24 +1178,104 @@ function selectModel(message) {
   return score >= 3 ? MODELS.smart : MODELS.fast;
 }
 
-// ── File block builder for Claude multimodal ──────────────────────────────────
-async function buildFileBlock(name, mediaType, base64) {
-  const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+// ── Google Cloud Vision ────────────────────────────────────────────────────────
+async function analyzeWithVision(base64) {
+  const key = process.env.CLOUD_VISION_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requests: [{
+            image: { content: base64 },
+            features: [
+              { type: "LABEL_DETECTION", maxResults: 10 },
+              { type: "TEXT_DETECTION" },
+            ],
+          }],
+        }),
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const r = data.responses?.[0];
+    if (!r) return null;
+    const labels = (r.labelAnnotations ?? []).filter(l => l.score > 0.6);
+    const ocrText = (r.textAnnotations?.[0]?.description ?? "").trim();
+    return { labels, ocrText };
+  } catch { return null; }
+}
+
+// Keywords that indicate the image needs Claude's full visual analysis (architectural / technical)
+const TECHNICAL_VISUAL_KEYWORDS = [
+  "plan", "blueprint", "floor plan", "map", "diagram", "aerial", "aerial view",
+  "architectural", "architecture", "facade", "building", "construction", "urban",
+  "satellite imagery", "neighbourhood", "city", "street", "road",
+  "engineering", "technical drawing", "schematic",
+];
+
+function isTechnicalImage(labels) {
+  const combined = labels.map(l => l.description.toLowerCase()).join(" ");
+  return TECHNICAL_VISUAL_KEYWORDS.some(kw => combined.includes(kw));
+}
+
+// Returns true when the raw image should be sent to Claude (Sonnet does the visual work).
+// Returns false when Vision context alone is enough (saves multimodal tokens).
+function shouldSendImageToClaude(labels, ocrText) {
+  // Technical content always goes to Claude with the image for quality
+  if (isTechnicalImage(labels)) return true;
+  // Rich OCR text on a non-technical image — Claude can work from the text
+  if ((ocrText ?? "").length > 60) return false;
+  // High-confidence top label on a general image (animal, food, object…) — Vision context is enough
+  if (labels?.[0]?.score > 0.82) return false;
+  // Uncertain — send image as fallback
+  return true;
+}
+
+// ── File blocks builder — returns array of content blocks ─────────────────────
+async function buildFileBlocks(name, mediaType, base64) {
+  const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/jpg"];
+
   if (IMAGE_TYPES.includes(mediaType)) {
-    return { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+    const mt = mediaType === "image/jpg" ? "image/jpeg" : mediaType;
+    const vision = await analyzeWithVision(base64);
+
+    if (vision) {
+      // Build Vision context string
+      let visionCtx = "[Google Vision — Análisis de imagen]\n";
+      if (vision.labels.length) {
+        visionCtx += "Contenido: " +
+          vision.labels.slice(0, 6).map(l => `${l.description} (${Math.round(l.score * 100)}%)`).join(", ");
+      }
+      if (vision.ocrText) {
+        visionCtx += `\nTexto extraído:\n${vision.ocrText.slice(0, 2000)}`;
+      }
+
+      const blocks = [];
+      if (shouldSendImageToClaude(vision.labels, vision.ocrText)) {
+        blocks.push({ type: "image", source: { type: "base64", media_type: mt, data: base64 } });
+      }
+      blocks.push({ type: "text", text: visionCtx });
+      return blocks;
+    }
+
+    // Fallback: Vision unavailable — send image directly to Claude
+    return [{ type: "image", source: { type: "base64", media_type: mt, data: base64 } }];
   }
-  if (mediaType === "image/jpg") {
-    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } };
-  }
+
   if (mediaType === "application/pdf") {
-    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } };
+    return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }];
   }
   if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.toLowerCase().endsWith(".docx")) {
     try {
       const buf = Buffer.from(base64, "base64");
       const { value } = await mammoth.extractRawText({ buffer: buf });
-      return { type: "text", text: `[Documento Word: "${name}"]\n\n${value.slice(0, 10000)}` };
-    } catch { return { type: "text", text: `[Documento Word: "${name}" — no se pudo extraer el texto]` }; }
+      return [{ type: "text", text: `[Documento Word: "${name}"]\n\n${value.slice(0, 10000)}` }];
+    } catch { return [{ type: "text", text: `[Documento Word: "${name}" — no se pudo extraer el texto]` }]; }
   }
   if (
     mediaType === "application/vnd.ms-excel" ||
@@ -1208,10 +1288,10 @@ async function buildFileBlock(name, mediaType, base64) {
       const text = wb.SheetNames.slice(0, 5).map(sn =>
         `=== ${sn} ===\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`
       ).join("\n\n").slice(0, 10000);
-      return { type: "text", text: `[Hoja de cálculo: "${name}"]\n\n${text}` };
-    } catch { return { type: "text", text: `[Hoja de cálculo: "${name}" — no se pudo extraer el contenido]` }; }
+      return [{ type: "text", text: `[Hoja de cálculo: "${name}"]\n\n${text}` }];
+    } catch { return [{ type: "text", text: `[Hoja de cálculo: "${name}" — no se pudo extraer el contenido]` }]; }
   }
-  return { type: "text", text: `[Archivo adjunto: "${name}" — formato no compatible para lectura automática]` };
+  return [{ type: "text", text: `[Archivo adjunto: "${name}" — formato no compatible para lectura automática]` }];
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────
@@ -1262,12 +1342,14 @@ export default async function handler(req, res) {
       if (history[i].role === "user") { lastUserIdx = i; break; }
     }
     if (lastUserIdx !== -1) {
-      const fileBlock = await buildFileBlock(attachedFile.name, attachedFile.mediaType, attachedFile.base64);
+      const fileBlocks = await buildFileBlocks(attachedFile.name, attachedFile.mediaType, attachedFile.base64);
       const textContent = history[lastUserIdx].content?.trim();
-      const blocks = [fileBlock];
-      blocks.push({ type: "text", text: textContent || "Analiza este archivo y describe su contenido." });
+      const allBlocks = [
+        ...fileBlocks,
+        { type: "text", text: textContent || "Analiza este archivo y describe su contenido." },
+      ];
       history = [...history];
-      history[lastUserIdx] = { role: "user", content: blocks };
+      history[lastUserIdx] = { role: "user", content: allBlocks };
     }
   }
 
