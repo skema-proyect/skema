@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-import { extractRequirements } from "./floorplan-llm.js";
-import { solve, applyDiff } from "./floorplan-solver.js";
+import { architectRequirements } from "./floorplan-llm.js";
+import { solve } from "./floorplan-solver.js";
 import { buildFloorPlanSVG } from "./floorplan-renderer.js";
 
 const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -8,8 +8,8 @@ const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_K
   : null;
 
 export async function runFloorPlanPipeline({ messages, conversationId, userId, existingPlanId }) {
-  // 1. Cargar requirements del plano existente si estamos editando
-  let existingRequirements = null;
+  // 1. Cargar spec existente si se está editando
+  let existingSpec = null;
   let parentId = null;
   let currentVersion = 0;
 
@@ -20,37 +20,21 @@ export async function runFloorPlanPipeline({ messages, conversationId, userId, e
       .eq("id", existingPlanId)
       .single();
     if (data) {
-      existingRequirements = data.requirements;
-      parentId = data.id;
-      currentVersion = data.version;
+      existingSpec    = data.requirements;
+      parentId        = data.id;
+      currentVersion  = data.version;
     }
   }
 
-  // 2. Extraer requisitos desde el LLM
-  // Solo los últimos 6 mensajes para no contaminar el contexto
-  const recentMessages = messages.slice(-6).map(m => ({
-    role: m.role,
-    content: typeof m.content === "string" ? m.content : "[archivo adjunto]",
-  }));
+  // 2. LLM arquitecto: interpreta el brief y decide la distribución
+  const spec = await architectRequirements(messages, existingSpec);
 
-  const req = await extractRequirements(recentMessages, existingRequirements);
-
-  if (!req.ok) {
-    return { ok: false, ask: req.ask };
+  if (!spec.ok) {
+    return { ok: false, ask: spec.ask };
   }
 
-  // 3. Resolver requirements finales
-  let finalReq;
-  if (req.mode === "edit" && existingRequirements) {
-    finalReq = applyDiff(existingRequirements, req.diff ?? []);
-    // Preservar notes del diff si existen
-    if (req.notes) finalReq._notes = req.notes;
-  } else {
-    finalReq = req;
-  }
-
-  // 4. Ejecutar solver geométrico
-  const solverResult = solve(finalReq);
+  // 3. Solver geométrico: convierte zonas a coordenadas
+  const solverResult = solve(spec);
 
   if (solverResult.infeasible) {
     return { ok: false, ask: solverResult.infeasible };
@@ -58,10 +42,10 @@ export async function runFloorPlanPipeline({ messages, conversationId, userId, e
 
   const layout = solverResult.layout;
 
-  // 5. Renderizar SVG
+  // 4. Renderizar SVG
   const svg = buildFloorPlanSVG(layout);
 
-  // 6. Guardar en Supabase
+  // 5. Guardar en Supabase
   let planId = null;
   const newVersion = currentVersion + 1;
 
@@ -73,10 +57,10 @@ export async function runFloorPlanPipeline({ messages, conversationId, userId, e
         conversation_id: conversationId ?? "unknown",
         version:         newVersion,
         parent_id:       parentId,
-        requirements:    finalReq,
+        requirements:    spec,
         layout,
         svg,
-        notes:           req.notes ?? null,
+        notes:           spec.notes ?? null,
       })
       .select("id")
       .single();
@@ -89,6 +73,6 @@ export async function runFloorPlanPipeline({ messages, conversationId, userId, e
     planId,
     version: newVersion,
     svg,
-    notes:   req.notes ?? finalReq._notes ?? "Aquí tienes el plano:",
+    notes:   spec.notes ?? "Aquí tienes el plano:",
   };
 }
