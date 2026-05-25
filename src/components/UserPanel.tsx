@@ -116,7 +116,7 @@ export default function UserPanel({ onClose }: { onClose: () => void }) {
             <p className="text-[11px] text-s-muted/60 mt-1">
               Desarrollado por{" "}
               <a href="https://www.ai-connect.es" target="_blank" rel="noopener noreferrer"
-                className="hover:text-s-muted transition-colors">
+                className="underline underline-offset-2 hover:text-s-muted transition-colors">
                 AI-CONNECT
               </a>
             </p>
