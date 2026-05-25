@@ -225,7 +225,7 @@ export default function ChatView() {
   };
 
   const hour = new Date().getHours();
-  const timeGreeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
+  const timeGreeting = hour >= 5 && hour < 12 ? "Buenos días" : hour >= 12 && hour < 20 ? "Buenas tardes" : "Buenas noches";
   const fullName = profile?.name ?? localStorage.getItem("skema_user_name");
   const firstName = fullName?.split(" ")[0] ?? null;
   const greeting = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
