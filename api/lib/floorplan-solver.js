@@ -94,30 +94,29 @@ function layoutTree(node, x, y, w, h, depth = 0) {
 // ── Agrupación: suite + su baño van siempre juntos ───────────────────────────
 
 function buildClusters(rooms) {
-  const used = new Set();
+  const usedIdx = new Set();
   const clusters = [];
 
-  // Primera pasada: agrupar dormitorio-suite con su baño privado
-  for (const r of rooms) {
-    if (used.has(r._type)) continue;
+  for (let i = 0; i < rooms.length; i++) {
+    if (usedIdx.has(i)) continue;
+    const r = rooms[i];
+
     if (r._type === 'dormitorio-suite') {
-      // Buscar un baño que quiera estar junto a esta suite, o el primer baño libre
-      const partner = rooms.find(o =>
-        !used.has(o._type) &&
-        (o._type === 'bano') &&
-        (o.adjacent_to?.includes('dormitorio-suite') || true)
-      );
-      if (partner) {
-        used.add(r._type);
-        used.add(partner._type);
-        clusters.push({ type: 'cluster', rooms: [r, partner], _area: r._area + partner._area });
+      const partnerIdx = rooms.findIndex((o, j) => !usedIdx.has(j) && o._type === 'bano');
+      if (partnerIdx !== -1) {
+        usedIdx.add(i);
+        usedIdx.add(partnerIdx);
+        clusters.push({
+          _type: 'cluster',
+          rooms: [r, rooms[partnerIdx]],
+          _area: r._area + rooms[partnerIdx]._area,
+        });
         continue;
       }
     }
-    if (!used.has(r._type)) {
-      used.add(r._type);
-      clusters.push(r);
-    }
+
+    usedIdx.add(i);
+    clusters.push(r);
   }
 
   return clusters;
