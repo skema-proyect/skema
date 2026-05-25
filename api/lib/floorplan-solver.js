@@ -1,5 +1,6 @@
-// Solver geométrico para planos de planta — slicing tree algorithm
-// Recibe requirements (del LLM) y devuelve layout (spec para el renderer)
+// Solver geométrico para planos de planta — layout arquitectónico prescriptivo
+// Estructura: zona pública | distribuidor | zona privada
+// Zona privada: clusters suite+baño juntos, terraza siempre en muro exterior
 
 const ROOM_LABELS = {
   'salon':            'Salón',
@@ -16,7 +17,6 @@ const ROOM_LABELS = {
   'vestidor':         'Vestidor',
 };
 
-// Áreas mínimas CTE
 const CTE_MIN = {
   'dormitorio':       6,
   'dormitorio-suite': 10,
@@ -32,6 +32,12 @@ const CTE_MIN = {
   'terraza':          4,
 };
 
+// Topes para habitáculos de servicio (evitar sobredimensionado)
+const SERVICE_MAX = {
+  'bano': 8, 'aseo': 5, 'distribuidor': 9,
+  'despensa': 5, 'lavadero': 5, 'vestidor': 10,
+};
+
 const PRIVATE_TYPES = new Set([
   'dormitorio', 'dormitorio-suite', 'bano', 'aseo', 'vestidor', 'lavadero', 'despensa',
 ]);
@@ -39,7 +45,8 @@ const PRIVATE_TYPES = new Set([
 function isPrivate(type) { return PRIVATE_TYPES.has(type); }
 function r2(n) { return Math.round(n * 100) / 100; }
 
-// Construye un árbol binario balanceado por área
+// ── Árbol de cortes básico (para zonas individuales) ─────────────────────────
+
 function buildTree(rooms) {
   if (rooms.length === 0) return null;
   if (rooms.length === 1) return { leaf: rooms[0] };
@@ -56,37 +63,92 @@ function buildTree(rooms) {
 
   const left  = sorted.slice(0, best);
   const right = sorted.slice(best);
-  const ratio = r2(left.reduce((s, r) => s + r._area, 0) / total);
-
-  return { ratio, left: buildTree(left), right: buildTree(right) };
+  return {
+    ratio: r2(left.reduce((s, r) => s + r._area, 0) / total),
+    left:  buildTree(left),
+    right: buildTree(right),
+  };
 }
 
-// Asigna posiciones x,y,w,h a cada hoja del árbol
 function layoutTree(node, x, y, w, h, depth = 0) {
   if (!node) return [];
   if (node.leaf) {
     return [{ ...node.leaf, x: r2(x), y: r2(y), w: r2(w), h: r2(h), area: r2(w * h) }];
   }
-
-  // Elige dirección: horizontal si el espacio es más ancho que alto, alternando con la profundidad
   const splitH = depth % 2 === 0 ? w >= h : w > h * 1.4;
-
   if (splitH) {
-    const leftW = r2(w * node.ratio);
+    const lw = r2(w * node.ratio);
     return [
-      ...layoutTree(node.left,  x,         y, leftW,      h, depth + 1),
-      ...layoutTree(node.right, x + leftW, y, w - leftW,  h, depth + 1),
+      ...layoutTree(node.left,  x,     y, lw,      h, depth + 1),
+      ...layoutTree(node.right, x + lw, y, w - lw, h, depth + 1),
     ];
   } else {
-    const topH = r2(h * node.ratio);
+    const th = r2(h * node.ratio);
     return [
-      ...layoutTree(node.left,  x, y,        w, topH,      depth + 1),
-      ...layoutTree(node.right, x, y + topH, w, h - topH,  depth + 1),
+      ...layoutTree(node.left,  x, y,      w, th,      depth + 1),
+      ...layoutTree(node.right, x, y + th, w, h - th,  depth + 1),
     ];
   }
 }
 
-// Genera puertas y ventanas para los rooms posicionados
+// ── Agrupación: suite + su baño van siempre juntos ───────────────────────────
+
+function buildClusters(rooms) {
+  const used = new Set();
+  const clusters = [];
+
+  // Primera pasada: agrupar dormitorio-suite con su baño privado
+  for (const r of rooms) {
+    if (used.has(r._type)) continue;
+    if (r._type === 'dormitorio-suite') {
+      // Buscar un baño que quiera estar junto a esta suite, o el primer baño libre
+      const partner = rooms.find(o =>
+        !used.has(o._type) &&
+        (o._type === 'bano') &&
+        (o.adjacent_to?.includes('dormitorio-suite') || true)
+      );
+      if (partner) {
+        used.add(r._type);
+        used.add(partner._type);
+        clusters.push({ type: 'cluster', rooms: [r, partner], _area: r._area + partner._area });
+        continue;
+      }
+    }
+    if (!used.has(r._type)) {
+      used.add(r._type);
+      clusters.push(r);
+    }
+  }
+
+  return clusters;
+}
+
+// Expande clusters a rooms posicionadas dentro de su rectángulo asignado
+function expandCluster(cluster, x, y, w, h) {
+  if (!cluster.rooms) return [{ ...cluster, x: r2(x), y: r2(y), w: r2(w), h: r2(h), area: r2(w * h) }];
+
+  const [a, b] = cluster.rooms;
+  const ratio = a._area / cluster._area;
+
+  // Suite más grande → ocupa el lado "bueno" (cerca del exterior)
+  // Dividir por el lado más largo para evitar formas muy estrechas
+  if (w >= h) {
+    const aw = r2(w * ratio);
+    return [
+      { ...a, x: r2(x),      y: r2(y), w: aw,      h: r2(h), area: r2(aw * h) },
+      { ...b, x: r2(x + aw), y: r2(y), w: r2(w - aw), h: r2(h), area: r2((w - aw) * h) },
+    ];
+  } else {
+    const ah = r2(h * ratio);
+    return [
+      { ...a, x: r2(x), y: r2(y),      w: r2(w), h: ah,         area: r2(w * ah) },
+      { ...b, x: r2(x), y: r2(y + ah), w: r2(w), h: r2(h - ah), area: r2(w * (h - ah)) },
+    ];
+  }
+}
+
+// ── Puertas y ventanas ────────────────────────────────────────────────────────
+
 function addOpenings(rooms, totalW, totalH, facades) {
   const EPS = 0.08;
 
@@ -98,82 +160,80 @@ function addOpenings(rooms, totalW, totalH, facades) {
     return false;
   }
 
-  // Inicializar arrays de aperturas
   const result = rooms.map(r => ({ ...r, doors: [], windows: [] }));
 
-  // Ventanas exteriores
+  // Ventanas en muros exteriores
   for (const r of result) {
     for (const wall of ['N', 'S', 'E', 'W']) {
       if (!touchesWall(r, wall)) continue;
+      // Terrazas y vestidores sin ventanas (o ventana pequeña)
       const wallLen = (wall === 'N' || wall === 'S') ? r.w : r.h;
-      if (wallLen < 1.2) continue;
-      const winW = Math.max(Math.min(r2(wallLen * 0.35), 1.8), 0.8);
+      if (wallLen < 1.0) continue;
+      const winW = Math.max(Math.min(r2(wallLen * 0.35), 1.8), 0.7);
       const pos  = r2((wallLen - winW) / 2);
       r.windows.push(`${wall}:${Math.max(0.2, pos)}:${winW}`);
     }
   }
 
-  // Puertas interiores entre habitaciones adyacentes
+  // Puertas interiores — UNA por pared compartida (solo en room[i], no en room[j])
   for (let i = 0; i < result.length; i++) {
     for (let j = i + 1; j < result.length; j++) {
       const a = result[i];
       const b = result[j];
 
-      // Pared vertical compartida (a izquierda de b) — una sola puerta, en el lado a
+      // Pared vertical (a izquierda de b)
       if (Math.abs((a.x + a.w) - b.x) < EPS) {
         const oStart = Math.max(a.y, b.y);
         const oEnd   = Math.min(a.y + a.h, b.y + b.h);
         const overlap = r2(oEnd - oStart);
         if (overlap >= 1.0) {
-          const doorW = 0.9;
-          const aPosY = r2(oStart - a.y + (overlap - doorW) / 2);
-          a.doors.push(`E:${Math.max(0.2, Math.min(aPosY, a.h - doorW - 0.2))}:${doorW}`);
+          const pos = r2(oStart - a.y + (overlap - 0.9) / 2);
+          a.doors.push(`E:${Math.max(0.2, Math.min(r2(pos), a.h - 1.1))}:0.9`);
         }
       }
 
-      // Pared horizontal compartida (a encima de b) — una sola puerta, en el lado a
+      // Pared horizontal (a encima de b)
       if (Math.abs((a.y + a.h) - b.y) < EPS) {
         const oStart = Math.max(a.x, b.x);
         const oEnd   = Math.min(a.x + a.w, b.x + b.w);
         const overlap = r2(oEnd - oStart);
         if (overlap >= 1.0) {
-          const doorW = 0.9;
-          const aPosX = r2(oStart - a.x + (overlap - doorW) / 2);
-          a.doors.push(`S:${Math.max(0.2, Math.min(aPosX, a.w - doorW - 0.2))}:${doorW}`);
+          const pos = r2(oStart - a.x + (overlap - 0.9) / 2);
+          a.doors.push(`S:${Math.max(0.2, Math.min(r2(pos), a.w - 1.1))}:0.9`);
         }
       }
     }
   }
 
-  // Puerta exterior en la fachada principal
-  const primaryFacade = facades?.[0] ?? 'S';
+  // Puerta exterior principal en la fachada
+  const facade = facades?.[0] ?? 'S';
   const pubOrder = ['distribuidor', 'salon-comedor', 'salon', 'cocina'];
   let extRoom = null;
   for (const type of pubOrder) {
-    extRoom = result.find(r => r._type === type && touchesWall(r, primaryFacade));
+    extRoom = result.find(r => r._type === type && touchesWall(r, facade));
     if (extRoom) break;
   }
-  if (!extRoom) extRoom = result.find(r => touchesWall(r, primaryFacade));
+  if (!extRoom) extRoom = result.find(r => touchesWall(r, facade));
 
   if (extRoom) {
-    const wall = primaryFacade;
-    const wallLen = (wall === 'N' || wall === 'S') ? extRoom.w : extRoom.h;
+    const wallLen = (facade === 'N' || facade === 'S') ? extRoom.w : extRoom.h;
     const pos = r2((wallLen - 0.9) / 2);
-    extRoom.doors.push(`${wall}:${Math.max(0.2, Math.min(pos, wallLen - 1.1))}:0.9`);
+    extRoom.doors.push(`${facade}:${Math.max(0.2, Math.min(pos, wallLen - 1.1))}:0.9`);
   }
 
   return result;
 }
 
-// Genera etiquetas únicas (Dormitorio 1, 2, 3…)
+// ── Etiquetas únicas ──────────────────────────────────────────────────────────
+
 function labelRooms(rooms) {
   const counts = {};
+  const repeatable = new Set(['dormitorio', 'dormitorio-suite', 'bano', 'aseo', 'terraza', 'vestidor']);
   return rooms.map(r => {
     const base = ROOM_LABELS[r._type] ?? r._type;
     counts[r._type] = (counts[r._type] ?? 0) + 1;
-    // Solo numerar tipos que pueden repetirse
-    const repeatable = ['dormitorio', 'dormitorio-suite', 'bano', 'aseo', 'terraza', 'vestidor'];
-    if (repeatable.includes(r._type) && rooms.filter(x => x._type === r._type).length > 1) {
+    const total = rooms.filter(x => x._type === r._type).length;
+    if (repeatable.has(r._type) && total > 1) {
       return { ...r, name: `${base} ${counts[r._type]}` };
     }
     return { ...r, name: base };
@@ -181,6 +241,7 @@ function labelRooms(rooms) {
 }
 
 // ── Solver principal ──────────────────────────────────────────────────────────
+
 export function solve(req) {
   const roomDefs = req.rooms ?? [];
   if (roomDefs.length === 0) return { infeasible: 'No se especificaron habitaciones.' };
@@ -192,18 +253,17 @@ export function solve(req) {
     _area: Math.max(r.min_area ?? CTE_MIN[r.type] ?? 4, CTE_MIN[r.type] ?? 4),
   }));
 
-  // Comprobar viabilidad
-  const totalMin = normalized.reduce((s, r) => s + r._area, 0);
+  // Viabilidad
+  const totalMin  = normalized.reduce((s, r) => s + r._area, 0);
   const totalAvail = req.total_area_m2 ?? totalMin * 1.15;
 
   if (totalAvail < totalMin * 0.85) {
     return {
-      infeasible: `Se necesitan al menos ${Math.ceil(totalMin)}m² para ${roomDefs.length} habitaciones (${Math.ceil(totalMin * 1.1)}m² recomendados); solo hay ${totalAvail}m² disponibles.`,
+      infeasible: `Se necesitan ~${Math.ceil(totalMin)}m² para ${roomDefs.length} habitaciones; solo hay ${totalAvail}m².`,
     };
   }
 
-  // Escalar áreas proporcionalmente. Para habitáculos de servicio, limitar el máximo.
-  const SERVICE_MAX = { bano: 8, aseo: 5, distribuidor: 8, despensa: 5, lavadero: 5, vestidor: 10 };
+  // Escalar con topes para habitáculos de servicio
   const usable = totalAvail * 0.90;
   const scale  = usable / totalMin;
   const scaled = normalized.map(r => {
@@ -214,67 +274,109 @@ export function solve(req) {
 
   // Dimensiones globales
   const hasEW = req.facades?.some(f => f === 'E' || f === 'W');
-  const aspectRatio = hasEW ? 1.05 : 1.42;
-  const W = r2(Math.sqrt(totalAvail * aspectRatio));
+  const W = r2(Math.sqrt(totalAvail * (hasEW ? 1.0 : 1.42)));
   const H = r2(totalAvail / W);
 
-  // Separar zona pública y privada
-  const pubRooms  = scaled.filter(r => !isPrivate(r._type));
-  const privRooms = scaled.filter(r =>  isPrivate(r._type));
+  // Separar categorías
+  const distribRoom = scaled.find(r => r._type === 'distribuidor');
+  const terrazaRoom = scaled.find(r => r._type === 'terraza');
+  const pubCore     = scaled.filter(r => !isPrivate(r._type) && r._type !== 'distribuidor' && r._type !== 'terraza');
+  const privCore    = scaled.filter(r => isPrivate(r._type));
 
-  let layoutRooms;
+  // Terraza va en la zona pública (fachada exterior)
+  const pubRooms  = terrazaRoom ? [...pubCore, terrazaRoom] : pubCore;
+  const privRooms = privCore;
 
-  if (pubRooms.length === 0) {
-    layoutRooms = layoutTree(buildTree(privRooms), 0, 0, W, H);
-  } else if (privRooms.length === 0) {
-    layoutRooms = layoutTree(buildTree(pubRooms), 0, 0, W, H);
-  } else {
-    const pubArea  = pubRooms.reduce((s, r) => s + r._area, 0);
-    const privArea = privRooms.reduce((s, r) => s + r._area, 0);
-    const total    = pubArea + privArea;
+  const facade = req.facades?.[0] ?? 'S';
 
-    // Zona pública siempre cerca de la fachada (entrada)
-    // N→público arriba, S→público abajo, E→público derecha, W→público izquierda
-    const facade = req.facades?.[0] ?? 'S';
-    const pubH  = r2(H * pubArea / total);
-    const privH = r2(H - pubH);
-    const pubW  = r2(W * pubArea / total);
-    const privW = r2(W - pubW);
+  // Áreas de cada zona
+  const pubArea   = pubRooms.reduce((s, r) => s + r._area, 0);
+  const privArea  = privRooms.reduce((s, r) => s + r._area, 0);
+  const distArea  = distribRoom?._area ?? 0;
+  const totalUsed = pubArea + privArea + distArea;
 
+  let layoutRooms = [];
+
+  // ── Layout vertical (fachadas N o S) ──────────────────────────────────────
+  if (facade === 'N' || facade === 'S') {
+    const pubH  = r2(H * pubArea / totalUsed);
+    const privH = r2(H * privArea / totalUsed);
+    const distH = r2(H - pubH - privH);
+
+    let pubY, distY, privY;
     if (facade === 'N') {
-      layoutRooms = [
-        ...layoutTree(buildTree(pubRooms),  0, 0,     W, pubH,  1),
-        ...layoutTree(buildTree(privRooms), 0, pubH,  W, privH, 1),
-      ];
-    } else if (facade === 'E') {
-      layoutRooms = [
-        ...layoutTree(buildTree(privRooms), 0,    0, privW, H, 1),
-        ...layoutTree(buildTree(pubRooms),  privW, 0, pubW,  H, 1),
-      ];
-    } else if (facade === 'W') {
-      layoutRooms = [
-        ...layoutTree(buildTree(pubRooms),  0,    0, pubW,  H, 1),
-        ...layoutTree(buildTree(privRooms), pubW, 0, privW, H, 1),
-      ];
+      // N: público arriba → distribuidor → privado abajo
+      pubY  = 0;
+      distY = pubH;
+      privY = pubH + distH;
     } else {
-      // S (default): público abajo, privado arriba
-      layoutRooms = [
-        ...layoutTree(buildTree(privRooms), 0, 0,     W, privH, 1),
-        ...layoutTree(buildTree(pubRooms),  0, privH, W, pubH,  1),
-      ];
+      // S: privado arriba → distribuidor → público abajo
+      privY = 0;
+      distY = privH;
+      pubY  = privH + distH;
+    }
+
+    // Zona pública — slicing tree horizontal
+    if (pubRooms.length > 0) {
+      layoutRooms.push(...layoutTree(buildTree(pubRooms), 0, pubY, W, pubH));
+    }
+
+    // Distribuidor — franja completa
+    if (distribRoom) {
+      layoutRooms.push({ ...distribRoom, x: 0, y: r2(distY), w: W, h: r2(distH), area: r2(W * distH) });
+    }
+
+    // Zona privada — con clusters suite+baño
+    if (privRooms.length > 0) {
+      const clusters = buildClusters(privRooms);
+      const clusterTree = buildTree(clusters);
+      const clusterLayout = layoutTree(clusterTree, 0, privY, W, privH);
+      for (const c of clusterLayout) {
+        layoutRooms.push(...expandCluster(c, c.x, c.y, c.w, c.h));
+      }
+    }
+
+  // ── Layout horizontal (fachadas E o W) ────────────────────────────────────
+  } else {
+    const pubW  = r2(W * pubArea / totalUsed);
+    const privW = r2(W * privArea / totalUsed);
+    const distW = r2(W - pubW - privW);
+
+    let pubX, distX, privX;
+    if (facade === 'W') {
+      pubX  = 0;
+      distX = pubW;
+      privX = pubW + distW;
+    } else {
+      privX = 0;
+      distX = privW;
+      pubX  = privW + distW;
+    }
+
+    if (pubRooms.length > 0) {
+      layoutRooms.push(...layoutTree(buildTree(pubRooms), pubX, 0, pubW, H));
+    }
+    if (distribRoom) {
+      layoutRooms.push({ ...distribRoom, x: r2(distX), y: 0, w: r2(distW), h: H, area: r2(distW * H) });
+    }
+    if (privRooms.length > 0) {
+      const clusters = buildClusters(privRooms);
+      const clusterLayout = layoutTree(buildTree(clusters), privX, 0, privW, H);
+      for (const c of clusterLayout) {
+        layoutRooms.push(...expandCluster(c, c.x, c.y, c.w, c.h));
+      }
     }
   }
 
   // Añadir puertas y ventanas
   const withOpenings = addOpenings(layoutRooms, W, H, req.facades ?? ['S']);
 
-  // Etiquetar habitaciones y limpiar campos internos
+  // Etiquetar y limpiar campos internos
   const labeled = labelRooms(withOpenings);
   const rooms = labeled.map(({ name, x, y, w, h, area, doors, windows }) =>
     ({ name, x, y, w, h, area, doors, windows })
   );
 
-  // Título
   const nDorm = roomDefs.filter(r => r.type === 'dormitorio' || r.type === 'dormitorio-suite').length;
   const title = nDorm > 0
     ? `Vivienda ${totalAvail}m² — ${nDorm} dorm.`
@@ -285,7 +387,7 @@ export function solve(req) {
 
 // Aplica un diff de edición a los requirements existentes
 export function applyDiff(requirements, diff) {
-  let rooms = [...requirements.rooms];
+  let rooms  = [...requirements.rooms];
   let result = { ...requirements };
 
   for (const op of diff) {
