@@ -27,9 +27,10 @@ export default function ChatView() {
   const [listening,       setListening]       = useState(false);
   const [projectInstructions, setProjectInstructions] = useState<string | null>(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [attachedFile,   setAttachedFile]   = useState<{ name: string; mediaType: string; base64: string } | null>(null);
+  const [attachedFile,   setAttachedFile]   = useState<{ name: string; mediaType: string; base64: string; preview?: string } | null>(null);
   const [searchMode,     setSearchMode]     = useState(false);
   const [isMultiLine,    setIsMultiLine]    = useState(false);
+  const [analyzingFile,  setAnalyzingFile]  = useState(false);
 
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +107,7 @@ export default function ChatView() {
     if (searchMode && content) content = `Busca información actualizada sobre ${content}`;
 
     setInput("");
+    setAnalyzingFile(!!currentFile);
     setAttachedFile(null);
     setSearchMode(false);
 
@@ -183,6 +185,7 @@ export default function ChatView() {
       await convsDB.update(convId, { messages: withErr });
     } finally {
       setLoading(false);
+      setAnalyzingFile(false);
       bump();
     }
   }, [input, loading, messages, setCurrentConvId, bump, attachedFile, searchMode]);
@@ -288,7 +291,8 @@ export default function ChatView() {
           reader.readAsDataURL(file);
         });
       }
-      setAttachedFile({ name: file.name, mediaType, base64 });
+      const preview = mediaType === "image/jpeg" ? `data:image/jpeg;base64,${base64}` : undefined;
+      setAttachedFile({ name: file.name, mediaType, base64, preview });
     } catch {
       alert("No se pudo leer el archivo. Inténtalo de nuevo.");
     }
@@ -343,6 +347,7 @@ export default function ChatView() {
               <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
               <div className="pt-1">
                 {loadingSeconds < 3  ? <TypingDots /> :
+                 analyzingFile       ? <LoadingText text="Analizando archivo..." /> :
                  loadingSeconds < 10 ? <LoadingText text="Buscando información actualizada..." /> :
                  loadingSeconds < 30 ? <LoadingText text="Analizando fuentes..." /> :
                                        <LoadingText text="Investigando en profundidad... puede tardar hasta un minuto" />}
@@ -399,8 +404,10 @@ export default function ChatView() {
                 </div>
               )}
               {attachedFile && (
-                <div className="flex items-center gap-1.5 bg-s-surface border border-s-border text-s-muted rounded-full px-3 py-1 text-[12px]">
-                  <Paperclip size={11} />
+                <div className="flex items-center gap-1.5 bg-s-surface border border-s-border text-s-muted rounded-full px-2 py-1 text-[12px]">
+                  {attachedFile.preview
+                    ? <img src={attachedFile.preview} className="w-5 h-5 rounded object-cover flex-shrink-0" />
+                    : <Paperclip size={11} className="flex-shrink-0" />}
                   <span className="max-w-[160px] truncate">{attachedFile.name}</span>
                   <button onClick={() => setAttachedFile(null)} className="ml-0.5 hover:opacity-70"><X size={11} /></button>
                 </div>

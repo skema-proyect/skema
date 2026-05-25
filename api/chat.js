@@ -1387,7 +1387,7 @@ Si no hay contenido suficiente:
     if (intent === "sketch") {
       // Extract the LATEST spec from history (ignore older ones)
       const allSpecs = history
-        .filter(m => m.role === "assistant" && m.content?.includes("<!--SPEC:"))
+        .filter(m => m.role === "assistant" && !Array.isArray(m.content) && m.content?.includes("<!--SPEC:"))
         .map(m => m.content?.match(/<!--SPEC:([\s\S]*?)-->/)?.[1]?.trim())
         .filter(Boolean);
       const prevSpecJSON = allSpecs[allSpecs.length - 1] ?? null;
@@ -1395,7 +1395,9 @@ Si no hay contenido suficiente:
       // Clean history — strip ALL spec comments to prevent context pollution
       const cleanHistory = history.map(m => ({
         role: m.role,
-        content: (m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim(),
+        content: Array.isArray(m.content)
+          ? m.content  // multimodal block — leave as-is
+          : (m.content ?? "").replace(/\n*<!--SPEC:[\s\S]*?-->/g, "").trim(),
       }));
 
       // ── Decision: discuss or generate? ──
@@ -1678,8 +1680,9 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     }
 
     // ── General chat — router ──
-    const isInvestigar = lastUser.content.startsWith("Busca información actualizada sobre ");
-    const classification = await classifyQuery(lastUser.content, isInvestigar);
+    // If there's a file attached, always use Claude (Perplexity can't process files)
+    const isInvestigar = !attachedFile && lastUser.content.startsWith("Busca información actualizada sobre ");
+    const classification = attachedFile ? "NO" : await classifyQuery(lastUser.content, isInvestigar);
 
     if (classification !== "NO") {
       const content = await searchPerplexity(lastUser.content, classification);
@@ -1688,7 +1691,8 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     }
 
     // ── Claude chat ──
-    const model = selectModel(lastUser.content);
+    // Files require the smart model (vision + document support)
+    const model = attachedFile ? MODELS.smart : selectModel(lastUser.content);
     const msg   = await client.messages.create({
       model, max_tokens: 1500,
       system: SYSTEM + userContext + projectContext + agendaHistoryNote, messages: history,
