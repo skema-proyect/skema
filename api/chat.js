@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1176,11 +1178,47 @@ function selectModel(message) {
   return score >= 3 ? MODELS.smart : MODELS.fast;
 }
 
+// ── File block builder for Claude multimodal ──────────────────────────────────
+async function buildFileBlock(name, mediaType, base64) {
+  const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+  if (IMAGE_TYPES.includes(mediaType)) {
+    return { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+  }
+  if (mediaType === "image/jpg") {
+    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } };
+  }
+  if (mediaType === "application/pdf") {
+    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } };
+  }
+  if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || name.toLowerCase().endsWith(".docx")) {
+    try {
+      const buf = Buffer.from(base64, "base64");
+      const { value } = await mammoth.extractRawText({ buffer: buf });
+      return { type: "text", text: `[Documento Word: "${name}"]\n\n${value.slice(0, 10000)}` };
+    } catch { return { type: "text", text: `[Documento Word: "${name}" — no se pudo extraer el texto]` }; }
+  }
+  if (
+    mediaType === "application/vnd.ms-excel" ||
+    mediaType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    /\.xlsx?$/i.test(name)
+  ) {
+    try {
+      const buf = Buffer.from(base64, "base64");
+      const wb = XLSX.read(buf, { type: "buffer" });
+      const text = wb.SheetNames.slice(0, 5).map(sn =>
+        `=== ${sn} ===\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`
+      ).join("\n\n").slice(0, 10000);
+      return { type: "text", text: `[Hoja de cálculo: "${name}"]\n\n${text}` };
+    } catch { return { type: "text", text: `[Hoja de cálculo: "${name}" — no se pudo extraer el contenido]` }; }
+  }
+  return { type: "text", text: `[Archivo adjunto: "${name}" — formato no compatible para lectura automática]` };
+}
+
 // ── Handler ────────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [], projectInstructions, userInstructions, today } = req.body;
+  const { messages = [], projectInstructions, userInstructions, today, attachedFile } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
 
   const userContext = userInstructions?.trim()
@@ -1215,8 +1253,25 @@ export default async function handler(req, res) {
     const hasEventDetail = /\b(titulo|titulo:|fecha|fecha:|hora|hora:|reunion|cita|llamada|visita|evento|con\s+el|con\s+la|con\s+don|con\s+dona)\b/.test(n2);
     if (hasDateTime || hasEventDetail) intent = "agenda";
   }
-  const history = messages.map(m => ({ role: m.role, content: m.content }));
-  const _debug = { intent, msg: lastUser.content.slice(0, 60) };
+  let history = messages.map(m => ({ role: m.role, content: m.content }));
+
+  // If there's an attached file, enrich the last user message with a multimodal content block
+  if (attachedFile?.base64) {
+    let lastUserIdx = -1;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === "user") { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx !== -1) {
+      const fileBlock = await buildFileBlock(attachedFile.name, attachedFile.mediaType, attachedFile.base64);
+      const textContent = history[lastUserIdx].content?.trim();
+      const blocks = [fileBlock];
+      blocks.push({ type: "text", text: textContent || "Analiza este archivo y describe su contenido." });
+      history = [...history];
+      history[lastUserIdx] = { role: "user", content: blocks };
+    }
+  }
+
+  const _debug = { intent, msg: lastUser.content.slice(0, 60), hasFile: !!attachedFile };
 
   try {
     // ── Agenda — extraer evento y confirmar ──────────────────────────────────────

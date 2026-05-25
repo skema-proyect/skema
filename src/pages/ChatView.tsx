@@ -27,7 +27,7 @@ export default function ChatView() {
   const [listening,       setListening]       = useState(false);
   const [projectInstructions, setProjectInstructions] = useState<string | null>(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [attachedFile,   setAttachedFile]   = useState<File | null>(null);
+  const [attachedFile,   setAttachedFile]   = useState<{ name: string; mediaType: string; base64: string } | null>(null);
   const [searchMode,     setSearchMode]     = useState(false);
   const [isMultiLine,    setIsMultiLine]    = useState(false);
 
@@ -99,11 +99,11 @@ export default function ChatView() {
 
   const send = useCallback(async (text?: string) => {
     let content = (text ?? input).trim();
-    if (!content && !attachedFile) return;
+    const currentFile = attachedFile;
+    if (!content && !currentFile) return;
     if (loading) return;
 
     if (searchMode && content) content = `Busca información actualizada sobre ${content}`;
-    if (attachedFile) content = content ? `${content}\n\n📎 ${attachedFile.name}` : `📎 ${attachedFile.name}`;
 
     setInput("");
     setAttachedFile(null);
@@ -120,14 +120,18 @@ export default function ChatView() {
     }
 
     // Add user message optimistically
-    const userMsg: Message = { id: uid(), role: "user", content, timestamp: now() };
+    const userMsg: Message = {
+      id: uid(), role: "user", content, timestamp: now(),
+      ...(currentFile ? { attachment: { name: currentFile.name, mediaType: currentFile.mediaType } } : {}),
+    };
     const withUser = [...messages, userMsg];
     setMessages(withUser);
 
     // Persist (title set on first message)
+    const titleText = content || currentFile?.name || "Archivo adjunto";
     await convsDB.update(convId, {
       messages: withUser,
-      ...(messages.length === 0 ? { title: content.slice(0, 50) + (content.length > 50 ? "…" : "") } : {}),
+      ...(messages.length === 0 ? { title: titleText.slice(0, 50) + (titleText.length > 50 ? "…" : "") } : {}),
     });
     // Notify parent of new convId only after DB has the message — prevents useEffect
     // from re-loading an empty conversation and wiping the optimistic user message.
@@ -145,6 +149,7 @@ export default function ChatView() {
           projectInstructions: projectInstructions ?? undefined,
           userInstructions: profile?.instructions ?? undefined,
           today: new Date().toISOString().split("T")[0],
+          ...(currentFile ? { attachedFile: { name: currentFile.name, mediaType: currentFile.mediaType, base64: currentFile.base64 } } : {}),
         }),
       });
       const data = await res.json();
@@ -243,9 +248,50 @@ export default function ChatView() {
     rec?.stop();
   };
 
-  const handleFileSelect = (file: File | null) => {
-    if (file) setAttachedFile(file);
+  const handleFileSelect = async (file: File | null) => {
     setShowAttachMenu(false);
+    if (!file) return;
+    try {
+      let base64: string;
+      let mediaType = file.type || "application/octet-stream";
+      if (file.type.startsWith("image/")) {
+        // Compress to max 1024px JPEG to stay well under Vercel's 4.5MB body limit
+        base64 = await new Promise<string>((resolve, reject) => {
+          const img = new Image();
+          const url = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            const MAX = 1024;
+            let { width, height } = img;
+            if (width > MAX || height > MAX) {
+              const r = Math.min(MAX / width, MAX / height);
+              width = Math.round(width * r); height = Math.round(height * r);
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = width; canvas.height = height;
+            canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.85).split(",")[1]);
+          };
+          img.onerror = reject;
+          img.src = url;
+        });
+        mediaType = "image/jpeg";
+      } else {
+        if (file.size > 3 * 1024 * 1024) {
+          alert("El archivo no puede superar 3 MB. Intenta dividir el PDF o comprimir el documento.");
+          return;
+        }
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+      setAttachedFile({ name: file.name, mediaType, base64 });
+    } catch {
+      alert("No se pudo leer el archivo. Inténtalo de nuevo.");
+    }
   };
 
   const downloadSVG = (svg: string) => {
@@ -614,8 +660,22 @@ function MessageBubble({ message: m, onDownloadSVG, convId, bump }: {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] bg-s-surface border border-s-border rounded-2xl px-4 py-3 text-[16px] sm:text-[14px] text-s-text whitespace-pre-wrap">
-          {m.content}
+        <div className="max-w-[75%] space-y-1.5">
+          {m.attachment && (
+            <div className="flex justify-end">
+              <div className="flex items-center gap-1.5 bg-s-surface border border-s-border rounded-xl px-3 py-1.5 text-[13px] text-s-muted">
+                {m.attachment.mediaType.startsWith("image/") ? <ImageIcon size={13} className="flex-shrink-0" /> :
+                 m.attachment.mediaType === "application/pdf"    ? <FileDown   size={13} className="flex-shrink-0" /> :
+                 <Paperclip size={13} className="flex-shrink-0" />}
+                <span className="max-w-[220px] truncate">{m.attachment.name}</span>
+              </div>
+            </div>
+          )}
+          {m.content && (
+            <div className="bg-s-surface border border-s-border rounded-2xl px-4 py-3 text-[16px] sm:text-[14px] text-s-text whitespace-pre-wrap">
+              {m.content}
+            </div>
+          )}
         </div>
       </div>
     );

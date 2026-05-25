@@ -13,6 +13,7 @@ export interface Message {
   model?: string;
   svg?: string;
   timestamp: string;
+  attachment?: { name: string; mediaType: string };
 }
 
 export interface Conversation {
