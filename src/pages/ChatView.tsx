@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check } from "lucide-react";
+import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check, Plus, Camera, Image as ImageIcon, Paperclip, Globe } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { conversations as convsDB, projects as projectsDB, events as eventsDB, notes as notesDB, uid, now } from "@/lib/db";
@@ -26,12 +26,21 @@ export default function ChatView() {
   const [loadingSeconds,  setLoadingSeconds]  = useState(0);
   const [listening,       setListening]       = useState(false);
   const [projectInstructions, setProjectInstructions] = useState<string | null>(null);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [attachedFile,   setAttachedFile]   = useState<File | null>(null);
+  const [searchMode,     setSearchMode]     = useState(false);
+  const [isMultiLine,    setIsMultiLine]    = useState(false);
+
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
   const recognitionRef  = useRef<any>(null);
   const finalsRef       = useRef<string>("");
   const pendingSendRef  = useRef<boolean>(false);
   const convIdRef       = useRef<string | null>(currentConvId);
+  const attachMenuRef   = useRef<HTMLDivElement>(null);
+  const cameraInputRef  = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef    = useRef<HTMLInputElement>(null);
 
   // Keep ref in sync so closures always see the latest convId
   useEffect(() => { convIdRef.current = currentConvId; }, [currentConvId]);
@@ -69,18 +78,36 @@ export default function ChatView() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Auto-resize textarea
+  // Auto-resize textarea + adaptive shape
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
+    setIsMultiLine(ta.scrollHeight > 52);
   }, [input]);
 
+  // Close attach menu on outside click
+  useEffect(() => {
+    if (!showAttachMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!attachMenuRef.current?.contains(e.target as Node)) setShowAttachMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showAttachMenu]);
+
   const send = useCallback(async (text?: string) => {
-    const content = (text ?? input).trim();
-    if (!content || loading) return;
+    let content = (text ?? input).trim();
+    if (!content && !attachedFile) return;
+    if (loading) return;
+
+    if (searchMode && content) content = `Busca información actualizada sobre ${content}`;
+    if (attachedFile) content = content ? `${content}\n\n📎 ${attachedFile.name}` : `📎 ${attachedFile.name}`;
+
     setInput("");
+    setAttachedFile(null);
+    setSearchMode(false);
 
     // Get or create conversation
     let convId = convIdRef.current;
@@ -153,7 +180,7 @@ export default function ChatView() {
       setLoading(false);
       bump();
     }
-  }, [input, loading, messages, setCurrentConvId, bump]);
+  }, [input, loading, messages, setCurrentConvId, bump, attachedFile, searchMode]);
 
   // ── Voice ────────────────────────────────────────────────────────────────────
   const startVoice = () => {
@@ -214,6 +241,11 @@ export default function ChatView() {
     const rec = recognitionRef.current;
     recognitionRef.current = null;
     rec?.stop();
+  };
+
+  const handleFileSelect = (file: File | null) => {
+    if (file) setAttachedFile(file);
+    setShowAttachMenu(false);
   };
 
   const downloadSVG = (svg: string) => {
@@ -298,11 +330,74 @@ export default function ChatView() {
         </div>
       )}
 
+      {/* Hidden file inputs */}
+      <input ref={cameraInputRef}  type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => { handleFileSelect(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+      <input ref={galleryInputRef} type="file" accept="image/*" className="hidden"
+        onChange={e => { handleFileSelect(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+      <input ref={fileInputRef}    type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp" className="hidden"
+        onChange={e => { handleFileSelect(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+
       {/* Input bar */}
       <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
+
+          {/* Attachment / search chips */}
+          {(attachedFile || searchMode) && (
+            <div className="flex flex-wrap items-center gap-2 px-1 mb-2">
+              {searchMode && (
+                <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-600 rounded-full px-3 py-1 text-[12px]">
+                  <Globe size={11} />
+                  <span>Buscar en internet</span>
+                  <button onClick={() => setSearchMode(false)} className="ml-0.5 hover:opacity-70"><X size={11} /></button>
+                </div>
+              )}
+              {attachedFile && (
+                <div className="flex items-center gap-1.5 bg-s-surface border border-s-border text-s-muted rounded-full px-3 py-1 text-[12px]">
+                  <Paperclip size={11} />
+                  <span className="max-w-[160px] truncate">{attachedFile.name}</span>
+                  <button onClick={() => setAttachedFile(null)} className="ml-0.5 hover:opacity-70"><X size={11} /></button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
-            <div className="flex-1 border border-s-border rounded-full bg-s-surface focus-within:border-s-text transition-colors px-5 py-3">
+
+            {/* + button */}
+            <div className="relative flex-shrink-0" ref={attachMenuRef}>
+              <button
+                onClick={() => setShowAttachMenu(v => !v)}
+                className="w-10 h-10 rounded-full bg-s-surface border border-s-border flex items-center justify-center text-s-muted hover:text-s-text hover:border-s-text transition-colors"
+                title="Adjuntar"
+              >
+                <Plus size={18} />
+              </button>
+              {showAttachMenu && (
+                <div className="absolute bottom-full mb-2 left-0 bg-s-surface border border-s-border rounded-xl shadow-lg py-1 min-w-[185px] z-10">
+                  <button onClick={() => cameraInputRef.current?.click()}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
+                    <Camera size={14} /> Cámara
+                  </button>
+                  <button onClick={() => galleryInputRef.current?.click()}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
+                    <ImageIcon size={14} /> Galería
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
+                    <Paperclip size={14} /> Archivos
+                  </button>
+                  <div className="border-t border-s-border my-1" />
+                  <button onClick={() => { setSearchMode(true); setShowAttachMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
+                    <Globe size={14} /> Buscar en internet
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Textarea */}
+            <div className={`flex-1 border border-s-border ${isMultiLine ? "rounded-2xl" : "rounded-full"} bg-s-surface focus-within:border-s-text transition-all px-5 py-3`}>
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -316,7 +411,8 @@ export default function ChatView() {
                 className="w-full text-[17px] sm:text-[15px] text-s-text bg-transparent outline-none resize-none placeholder:text-s-muted leading-snug"
               />
             </div>
-            {input.trim() ? (
+
+            {(input.trim() || attachedFile) ? (
               <button onClick={() => send()} disabled={loading}
                 className="w-12 h-12 rounded-full bg-black text-white flex items-center justify-center flex-shrink-0 hover:opacity-75 disabled:opacity-30 transition-opacity"
                 title="Enviar"><Send size={19} /></button>
