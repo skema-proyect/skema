@@ -26,15 +26,23 @@ export function buildFloorPlanSVG(spec) {
   const push = s => p.push(s);
 
   push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" style="background:white">`);
-  push(`<defs><style>text{font-family:Arial,Helvetica,sans-serif}</style></defs>`);
+  push(`<defs>
+    <style>text{font-family:Arial,Helvetica,sans-serif}</style>
+    <pattern id="hatch-terraza" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#7ab87a" stroke-width="1.5"/>
+    </pattern>
+  </defs>`);
 
   push(`<rect x="${X(0)-EXT}" y="${Y(0)-EXT}" width="${S(spec.width)+EXT*2}" height="${S(spec.height)+EXT*2}" fill="#1a1a1a"/>`);
   push(`<rect x="${X(0)}" y="${Y(0)}" width="${S(spec.width)}" height="${S(spec.height)}" fill="white"/>`);
 
   spec.rooms.forEach((r, i) => {
     const rx = X(r.x), ry = Y(r.y), rw = S(r.w), rh = S(r.h);
-    const color = COLORS[i % COLORS.length];
-    push(`<rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${rw.toFixed(1)}" height="${rh.toFixed(1)}" fill="${color}" stroke="#444" stroke-width="${INT}"/>`);
+    const isOutdoor = /terraza|balcon|patio/i.test(r.name ?? '');
+    const fill   = isOutdoor ? 'url(#hatch-terraza)' : COLORS[i % COLORS.length];
+    const stroke = isOutdoor ? '#4a8a4a' : '#444';
+    const dash   = isOutdoor ? ` stroke-dasharray="6,3"` : '';
+    push(`<rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${rw.toFixed(1)}" height="${rh.toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="${INT}"${dash}/>`);
 
     const cx = (rx + rw / 2).toFixed(1);
     const cy = (ry + rh / 2).toFixed(1);

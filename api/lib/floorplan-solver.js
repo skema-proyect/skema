@@ -271,10 +271,16 @@ export function solve(req) {
     return { ...r, _area: cap ? Math.min(raw, cap) : raw };
   });
 
-  // Dimensiones globales
-  const hasEW = req.facades?.some(f => f === 'E' || f === 'W');
-  const W = r2(Math.sqrt(totalAvail * (hasEW ? 1.0 : 1.42)));
-  const H = r2(totalAvail / W);
+  // Dimensiones globales — usar las del usuario si las especificó
+  let W, H;
+  if (req.width_m && req.depth_m) {
+    W = r2(req.width_m);
+    H = r2(req.depth_m);
+  } else {
+    const hasEW = req.facades?.some(f => f === 'E' || f === 'W');
+    W = r2(Math.sqrt(totalAvail * (hasEW ? 1.0 : 1.42)));
+    H = r2(totalAvail / W);
+  }
 
   // Separar categorías
   const distribRoom = scaled.find(r => r._type === 'distribuidor');
@@ -296,11 +302,15 @@ export function solve(req) {
 
   let layoutRooms = [];
 
+  const MIN_DIST = 1.2; // pasillo mínimo viable (metros)
+
   // ── Layout vertical (fachadas N o S) ──────────────────────────────────────
   if (facade === 'N' || facade === 'S') {
-    const pubH  = r2(H * pubArea / totalUsed);
-    const privH = r2(H * privArea / totalUsed);
-    const distH = r2(H - pubH - privH);
+    const rawDistH = distribRoom ? r2(H * distArea / totalUsed) : 0;
+    const distH    = distribRoom ? Math.max(rawDistH, MIN_DIST) : 0;
+    const remainH  = r2(H - distH);
+    const pubH     = r2(remainH * pubArea / (pubArea + privArea));
+    const privH    = r2(remainH - pubH);
 
     let pubY, distY, privY;
     if (facade === 'N') {
@@ -337,9 +347,11 @@ export function solve(req) {
 
   // ── Layout horizontal (fachadas E o W) ────────────────────────────────────
   } else {
-    const pubW  = r2(W * pubArea / totalUsed);
-    const privW = r2(W * privArea / totalUsed);
-    const distW = r2(W - pubW - privW);
+    const rawDistW = distribRoom ? r2(W * distArea / totalUsed) : 0;
+    const distW    = distribRoom ? Math.max(rawDistW, MIN_DIST) : 0;
+    const remainW  = r2(W - distW);
+    const pubW     = r2(remainW * pubArea / (pubArea + privArea));
+    const privW    = r2(remainW - pubW);
 
     let pubX, distX, privX;
     if (facade === 'W') {

@@ -13,6 +13,8 @@ FORMATOS DE RESPUESTA (elige UNO):
 {
   "ok": true, "mode": "create",
   "total_area_m2": <número>,
+  "width_m": <número|null>,
+  "depth_m": <número|null>,
   "facades": ["S"|"N"|"E"|"W"],
   "rooms": [
     {
@@ -49,6 +51,13 @@ REGLAS:
 - Sin m² indicados: estima (1 dorm≈50m², 2 dorm≈70m², 3 dorm≈90m², 4 dorm≈110m²)
 - 1 baño → "bano". 2+ baños → 1 "bano" + resto "aseo"
 - Áreas mínimas CTE: dormitorio≥6, suite≥10, salon/salon-comedor≥14, cocina≥5, bano≥3, aseo≥2.5
+- "cocina abierta" / "cocina integrada" / "cocina americana" → usar SOLO "salon-comedor" con min_area≥20, NO crear "cocina" como habitación separada
+- Si el usuario da dimensiones exactas (ej. "10m por 20m", "10x20", "ancho 8m fondo 15m"):
+  - total_area_m2 = width_m × depth_m
+  - width_m = ancho (dimensión paralela a la fachada)
+  - depth_m = fondo (dimensión perpendicular a la fachada)
+  - Si no especifica cuál es fachada y cuál es fondo, el lado más corto suele ser el frente
+- Si el usuario NO da dimensiones, omite width_m y depth_m (o ponlos a null)
 - Devuelve SOLO el JSON, sin markdown, sin explicaciones, sin bloques de código`;
 
 export async function extractRequirements(messages, existingRequirements = null) {
