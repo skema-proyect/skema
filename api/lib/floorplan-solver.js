@@ -119,33 +119,27 @@ function addOpenings(rooms, totalW, totalH, facades) {
       const a = result[i];
       const b = result[j];
 
-      // Pared vertical compartida (a izquierda de b)
+      // Pared vertical compartida (a izquierda de b) — una sola puerta, en el lado a
       if (Math.abs((a.x + a.w) - b.x) < EPS) {
         const oStart = Math.max(a.y, b.y);
         const oEnd   = Math.min(a.y + a.h, b.y + b.h);
         const overlap = r2(oEnd - oStart);
         if (overlap >= 1.0) {
           const doorW = 0.9;
-          const midOffset = r2((overlap - doorW) / 2);
-          const aPosY = r2(oStart - a.y + midOffset);
-          const bPosY = r2(oStart - b.y + midOffset);
+          const aPosY = r2(oStart - a.y + (overlap - doorW) / 2);
           a.doors.push(`E:${Math.max(0.2, Math.min(aPosY, a.h - doorW - 0.2))}:${doorW}`);
-          b.doors.push(`W:${Math.max(0.2, Math.min(bPosY, b.h - doorW - 0.2))}:${doorW}`);
         }
       }
 
-      // Pared horizontal compartida (a encima de b)
+      // Pared horizontal compartida (a encima de b) — una sola puerta, en el lado a
       if (Math.abs((a.y + a.h) - b.y) < EPS) {
         const oStart = Math.max(a.x, b.x);
         const oEnd   = Math.min(a.x + a.w, b.x + b.w);
         const overlap = r2(oEnd - oStart);
         if (overlap >= 1.0) {
           const doorW = 0.9;
-          const midOffset = r2((overlap - doorW) / 2);
-          const aPosX = r2(oStart - a.x + midOffset);
-          const bPosX = r2(oStart - b.x + midOffset);
+          const aPosX = r2(oStart - a.x + (overlap - doorW) / 2);
           a.doors.push(`S:${Math.max(0.2, Math.min(aPosX, a.w - doorW - 0.2))}:${doorW}`);
-          b.doors.push(`N:${Math.max(0.2, Math.min(bPosX, b.w - doorW - 0.2))}:${doorW}`);
         }
       }
     }
@@ -208,10 +202,15 @@ export function solve(req) {
     };
   }
 
-  // Escalar áreas proporcionalmente al espacio disponible (menos ~10% para muros)
+  // Escalar áreas proporcionalmente. Para habitáculos de servicio, limitar el máximo.
+  const SERVICE_MAX = { bano: 8, aseo: 5, distribuidor: 8, despensa: 5, lavadero: 5, vestidor: 10 };
   const usable = totalAvail * 0.90;
   const scale  = usable / totalMin;
-  const scaled = normalized.map(r => ({ ...r, _area: r2(r._area * scale) }));
+  const scaled = normalized.map(r => {
+    const raw = r2(r._area * scale);
+    const cap = SERVICE_MAX[r._type];
+    return { ...r, _area: cap ? Math.min(raw, cap) : raw };
+  });
 
   // Dimensiones globales
   const hasEW = req.facades?.some(f => f === 'E' || f === 'W');
@@ -234,17 +233,31 @@ export function solve(req) {
     const privArea = privRooms.reduce((s, r) => s + r._area, 0);
     const total    = pubArea + privArea;
 
-    // Por defecto: privado al norte (top), público al sur (bottom)
-    // Si fachada E o W: privado a la derecha, público a la izquierda
-    if (req.facades?.includes('W')) {
-      const pubW  = r2(W * pubArea / total);
+    // Zona pública siempre cerca de la fachada (entrada)
+    // N→público arriba, S→público abajo, E→público derecha, W→público izquierda
+    const facade = req.facades?.[0] ?? 'S';
+    const pubH  = r2(H * pubArea / total);
+    const privH = r2(H - pubH);
+    const pubW  = r2(W * pubArea / total);
+    const privW = r2(W - pubW);
+
+    if (facade === 'N') {
       layoutRooms = [
-        ...layoutTree(buildTree(pubRooms),  0,    0, pubW,    H, 1),
-        ...layoutTree(buildTree(privRooms), pubW, 0, W - pubW, H, 1),
+        ...layoutTree(buildTree(pubRooms),  0, 0,     W, pubH,  1),
+        ...layoutTree(buildTree(privRooms), 0, pubH,  W, privH, 1),
+      ];
+    } else if (facade === 'E') {
+      layoutRooms = [
+        ...layoutTree(buildTree(privRooms), 0,    0, privW, H, 1),
+        ...layoutTree(buildTree(pubRooms),  privW, 0, pubW,  H, 1),
+      ];
+    } else if (facade === 'W') {
+      layoutRooms = [
+        ...layoutTree(buildTree(pubRooms),  0,    0, pubW,  H, 1),
+        ...layoutTree(buildTree(privRooms), pubW, 0, privW, H, 1),
       ];
     } else {
-      const pubH  = r2(H * pubArea / total);
-      const privH = r2(H - pubH);
+      // S (default): público abajo, privado arriba
       layoutRooms = [
         ...layoutTree(buildTree(privRooms), 0, 0,     W, privH, 1),
         ...layoutTree(buildTree(pubRooms),  0, privH, W, pubH,  1),
