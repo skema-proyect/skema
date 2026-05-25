@@ -132,15 +132,15 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
 
       {/* Servicios rápidos */}
       <div className="px-3 py-3 border-b border-s-sidebar-border">
-        <p className="text-[12px] uppercase tracking-widest text-s-sidebar-muted mb-2 px-1">Servicios</p>
+        <p className="text-[13px] uppercase tracking-widest text-s-sidebar-muted mb-2 px-1">Servicios</p>
         <div className="space-y-0.5">
           {SERVICES.map(({ icon: Icon, label, prompt }) => (
             <button
               key={label}
               onClick={() => { onServiceSelect(prompt); onClose?.(); }}
-              className="w-full flex items-center gap-2.5 px-2 py-2.5 rounded text-[15px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors text-left"
+              className="w-full flex items-center gap-3 px-2 py-2.5 rounded text-[17px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors text-left"
             >
-              <Icon size={13} className="flex-shrink-0" />
+              <Icon size={17} className="flex-shrink-0" />
               {label}
             </button>
           ))}
@@ -153,9 +153,9 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         {/* Projects */}
         <div>
           <div className="flex items-center justify-between px-2 mb-1">
-            <span className="text-[12px] uppercase tracking-widest text-s-sidebar-muted font-medium">Proyectos</span>
+            <span className="text-[13px] uppercase tracking-widest text-s-sidebar-muted font-medium">Proyectos</span>
             <button onClick={() => setNewProj(v => !v)} className="p-0.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted">
-              <Plus size={13} />
+              <Plus size={14} />
             </button>
           </div>
 
@@ -179,19 +179,19 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
             const open  = expanded[p.id];
             return (
               <div key={p.id}>
-                <div className="flex items-center gap-1 px-2 py-1.5 rounded group">
+                <div className="flex items-center gap-1 px-2 py-2 rounded group">
                   {/* Chevron — solo expand/collapse */}
                   <button
                     onClick={() => toggleProject(p.id)}
                     className="p-0.5 rounded hover:bg-s-sidebar-hover text-s-sidebar-muted flex-shrink-0"
                   >
-                    {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>
-                  <FolderOpen size={13} className="text-s-sidebar-muted flex-shrink-0" />
+                  <FolderOpen size={16} className="text-s-sidebar-muted flex-shrink-0" />
                   {/* Nombre — navega a la vista del proyecto */}
                   <button
                     onClick={() => { navigate(`/proyecto/${p.id}`); onClose?.(); }}
-                    className="flex-1 text-left text-[15px] truncate text-s-sidebar-text hover:text-white transition-colors min-w-0"
+                    className="flex-1 text-left text-[17px] truncate text-s-sidebar-text hover:text-white transition-colors min-w-0"
                   >
                     {p.name}
                   </button>
@@ -215,7 +215,7 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
         {/* Loose conversations */}
         {loose.length > 0 && (
           <div>
-            <p className="px-2 text-[12px] uppercase tracking-widest text-s-sidebar-muted font-medium mb-1">Recientes</p>
+            <p className="px-2 text-[13px] uppercase tracking-widest text-s-sidebar-muted font-medium mb-1">Recientes</p>
             {loose.map(c => (
               <ConvItem key={c.id} conv={c} active={currentConvId === c.id}
                 onSelect={() => { onSelectConv(c.id); navigate("/"); onClose?.(); }}
@@ -229,31 +229,31 @@ export default function Sidebar({ currentConvId, onSelectConv, onNewChat, onServ
       {/* Bottom nav */}
       <div className="border-t border-s-sidebar-border px-2 py-3 space-y-0.5">
         <button onClick={() => goTo("/notas")}
-          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
+          className={`w-full flex items-center gap-3 px-2 py-2.5 rounded text-[17px] transition-colors ${
             isActive("/notas") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
           }`}>
-          <StickyNote size={15} /> Notas
+          <StickyNote size={17} /> Notas
         </button>
         <button onClick={() => goTo("/agenda")}
-          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
+          className={`w-full flex items-center gap-3 px-2 py-2.5 rounded text-[17px] transition-colors ${
             isActive("/agenda") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
           }`}>
-          <Calendar size={15} /> Agenda
+          <Calendar size={17} /> Agenda
         </button>
 
         {profile?.role === "admin" && (
           <button onClick={() => goTo("/admin")}
-            className={`w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] transition-colors ${
+            className={`w-full flex items-center gap-3 px-2 py-2.5 rounded text-[17px] transition-colors ${
               isActive("/admin") ? "bg-s-sidebar-hover text-s-sidebar-text" : "text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text"
             }`}>
-            <ShieldCheck size={15} /> Admin
+            <ShieldCheck size={17} /> Admin
           </button>
         )}
 
         {!installed && !isStandalone && (
           <button onClick={handleInstall}
-            className="lg:hidden w-full flex items-center gap-2.5 px-2 py-2 rounded text-[16px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors">
-            <Download size={16} /> Instalar app
+            className="lg:hidden w-full flex items-center gap-3 px-2 py-2.5 rounded text-[17px] text-s-sidebar-muted hover:bg-s-sidebar-hover hover:text-s-sidebar-text transition-colors">
+            <Download size={17} /> Instalar app
           </button>
         )}
       </div>
@@ -295,9 +295,9 @@ function ConvItem({ conv, active, onSelect, onDelete, onMove, projects, indent =
 
   return (
     <div ref={ref} onClick={onSelect}
-      className={`relative flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${indent ? "ml-4" : ""} ${active ? "bg-s-sidebar-hover" : "hover:bg-s-sidebar-hover"}`}>
-      <MessageSquare size={12} className="text-s-sidebar-muted flex-shrink-0" />
-      <span className="flex-1 text-[15px] truncate text-s-sidebar-text">{conv.title}</span>
+      className={`relative flex items-center gap-2.5 px-2 py-2 rounded cursor-pointer group ${indent ? "ml-4" : ""} ${active ? "bg-s-sidebar-hover" : "hover:bg-s-sidebar-hover"}`}>
+      <MessageSquare size={15} className="text-s-sidebar-muted flex-shrink-0" />
+      <span className="flex-1 text-[17px] truncate text-s-sidebar-text">{conv.title}</span>
       <div className="hidden group-hover:flex items-center gap-0.5">
         {projects.length > 0 && (
           <button
