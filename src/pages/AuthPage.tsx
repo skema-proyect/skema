@@ -53,7 +53,7 @@ export default function AuthPage() {
 
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <img src="/logo-skema.png" alt="SKEMA" className="h-8 w-auto mb-2" />
+          <img src="/logo-skema.png" alt="SKEMA" className="h-8 w-auto mb-2 dark:invert" />
           <p className="text-s-muted text-[13px]">Asistente de dirección</p>
         </div>
 

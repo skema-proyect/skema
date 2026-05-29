@@ -68,7 +68,7 @@ export default function Layout() {
             <Menu size={20} />
           </button>
           <button onClick={handleNewChat}>
-            <img src="/logo-skema.png" alt="SKEMA" className="h-5 w-auto hover:opacity-70 transition-opacity" />
+            <img src="/logo-skema.png" alt="SKEMA" className="h-5 w-auto hover:opacity-70 transition-opacity dark:invert" />
           </button>
         </div>
 
