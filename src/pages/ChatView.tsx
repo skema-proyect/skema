@@ -446,9 +446,10 @@ export default function ChatView() {
       <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
 
-          {/* Panel de investigación */}
+          {/* Panel de investigación — modal */}
           {investigationMode && (
-            <div className="mb-2 bg-s-surface border-2 border-s-text rounded-2xl p-3 space-y-2">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg bg-s-bg border border-s-border rounded-2xl p-5 space-y-3 shadow-xl">
               <div className="flex items-center justify-between">
                 <span className="text-[12px] font-medium text-s-text flex items-center gap-1.5">
                   <Search size={12} /> Investigación profunda
@@ -486,6 +487,7 @@ export default function ChatView() {
                   Investigar
                 </button>
               </div>
+            </div>
             </div>
           )}
 
