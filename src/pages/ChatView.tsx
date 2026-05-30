@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
 import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check, Plus, Camera, Image as ImageIcon, Paperclip, Globe } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -320,6 +320,23 @@ export default function ChatView() {
   const firstName = fullName?.split(" ")[0] ?? null;
   const greeting = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
 
+  const subtitlePhrases = [
+    "¿En qué puedo ayudarte hoy?",
+    "¿En qué deberíamos centrarnos hoy?",
+    "¿Qué tienes entre manos?",
+    "¿Qué resolvemos hoy?",
+    "¿Por dónde empezamos?",
+    "¿Qué necesitas hoy?",
+    "Dime qué necesitas.",
+    "¿Empezamos?",
+    "¿Qué hay en el plato hoy?",
+    "¿Qué sacamos adelante hoy?",
+  ];
+  const subtitle = useMemo(
+    () => subtitlePhrases[Math.floor(Math.random() * subtitlePhrases.length)],
+    []
+  );
+
   return (
     <div className="relative flex flex-col h-full bg-s-bg">
 
@@ -328,7 +345,7 @@ export default function ChatView() {
         <div className="flex-1 flex flex-col items-center justify-center px-4 pb-4">
           <img src="/hormiga-skema.png" alt="SKEMA" className="h-24 w-auto mb-4 opacity-90" />
           <h1 className="text-s-text text-2xl font-light mb-1">{greeting}</h1>
-          <p className="text-s-muted text-sm mb-5">¿En qué puedo ayudarte hoy?</p>
+          <p className="text-s-muted text-sm mb-5">{subtitle}</p>
           <div className="flex flex-wrap gap-2 justify-center max-w-lg">
             {SERVICES.map(({ icon: Icon, label, prompt }) => (
               <button
