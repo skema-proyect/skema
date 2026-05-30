@@ -20,9 +20,15 @@ export async function runFloorPlanPipeline({ messages, conversationId, userId, e
       .eq("id", existingPlanId)
       .single();
     if (data) {
-      existingSpec    = data.requirements;
-      parentId        = data.id;
-      currentVersion  = data.version;
+      // Solo aceptar specs en el nuevo formato (rooms[]). Specs del sistema viejo
+      // (zona_publica/zona_privada/circulacion) se ignoran y la edición se trata
+      // como creación nueva — el LLM no puede mezclar esquemas.
+      const isNewFormat = Array.isArray(data.requirements?.rooms);
+      if (isNewFormat) {
+        existingSpec   = data.requirements;
+        parentId       = data.id;
+        currentVersion = data.version;
+      }
     }
   }
 
