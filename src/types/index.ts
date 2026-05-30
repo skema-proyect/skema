@@ -15,6 +15,7 @@ export interface Message {
   timestamp: string;
   attachment?: { name: string; mediaType: string };
   floorPlan?: { planId: string; version: number };
+  isInvestigation?: boolean;
 }
 
 export interface Conversation {
