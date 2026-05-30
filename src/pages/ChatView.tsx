@@ -448,7 +448,7 @@ export default function ChatView() {
 
           {/* Panel de investigación */}
           {investigationMode && (
-            <div className="mb-2 bg-s-surface border border-s-border rounded-2xl p-3 space-y-2">
+            <div className="mb-2 bg-s-surface border-2 border-s-text rounded-2xl p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[12px] font-medium text-s-text flex items-center gap-1.5">
                   <Search size={12} /> Investigación profunda
@@ -463,6 +463,7 @@ export default function ChatView() {
               />
               <textarea
                 placeholder="¿Qué necesitas saber exactamente?"
+                autoFocus
                 value={invData.query}
                 onChange={e => setInvData(d => ({ ...d, query: e.target.value }))}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendInvestigation(); } }}
