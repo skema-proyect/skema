@@ -13,6 +13,14 @@
   100% { height: 40px; opacity: 1;   }
 }
 
+@keyframes antSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-ant-spin {
+  animation: antSpin 1.4s linear infinite;
+}
+
 body {
   margin: 0;
   background-color: #0F1117;

@@ -382,7 +382,9 @@ export default function ChatView() {
           ))}
           {loading && (
             <div className="flex gap-3 max-w-2xl">
-              <img src="/ant-skema.png" alt="" className="w-7 h-7 flex-shrink-0 mt-0.5 object-contain" />
+              <div className="w-7 h-7 flex-shrink-0 mt-0.5 rounded-full overflow-hidden animate-ant-spin">
+                <img src="/ant-skema.png" alt="" className="w-full h-full object-contain" />
+              </div>
               <div className="pt-1">
                 {loadingSeconds < 3  ? <TypingDots /> :
                  analyzingFile       ? <LoadingText text="Analizando archivo..." /> :
