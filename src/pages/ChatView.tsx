@@ -318,24 +318,37 @@ export default function ChatView() {
   const timeGreeting = hour >= 5 && hour < 12 ? "Buenos días" : hour >= 12 && hour < 20 ? "Buenas tardes" : "Buenas noches";
   const fullName = profile?.name ?? localStorage.getItem("skema_user_name");
   const firstName = fullName?.split(" ")[0] ?? null;
-  const greeting = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
 
-  const subtitlePhrases = [
-    "¿En qué puedo ayudarte hoy?",
-    "¿En qué deberíamos centrarnos hoy?",
-    "¿Qué tienes entre manos?",
-    "¿Qué resolvemos hoy?",
-    "¿Por dónde empezamos?",
-    "¿Qué necesitas hoy?",
-    "Dime qué necesitas.",
-    "¿Empezamos?",
-    "¿Qué hay en el plato hoy?",
-    "¿Qué sacamos adelante hoy?",
-  ];
-  const subtitle = useMemo(
-    () => subtitlePhrases[Math.floor(Math.random() * subtitlePhrases.length)],
-    []
-  );
+  const [visitCtx] = useState(() => {
+    const today = new Date().toDateString();
+    const lastDate = localStorage.getItem("skema_last_visit_date");
+    const lastTime = parseInt(localStorage.getItem("skema_last_visit") || "0");
+    const prevVisits = lastDate === today ? parseInt(localStorage.getItem("skema_visits_today") || "0") : 0;
+    const hoursSinceLast = lastTime ? (Date.now() - lastTime) / 3600000 : 999;
+    const isFirstToday = lastDate !== today;
+    const currentVisits = prevVisits + 1;
+    localStorage.setItem("skema_last_visit_date", today);
+    localStorage.setItem("skema_last_visit", Date.now().toString());
+    localStorage.setItem("skema_visits_today", currentVisits.toString());
+    return { isFirstToday, hoursSinceLast, currentVisits };
+  });
+
+  const greeting = useMemo(() => {
+    const base = firstName ? `${timeGreeting}, ${firstName}` : timeGreeting;
+    if (!visitCtx.isFirstToday && visitCtx.hoursSinceLast >= 4)
+      return firstName ? `Bienvenido de vuelta, ${firstName}` : "Bienvenido de vuelta";
+    return base;
+  }, [firstName, timeGreeting, visitCtx]);
+
+  const subtitle = useMemo(() => {
+    if (visitCtx.currentVisits >= 3)          return "¿Qué más tienes?";
+    if (!visitCtx.isFirstToday && visitCtx.hoursSinceLast < 1)  return "¿Seguimos?";
+    if (!visitCtx.isFirstToday && visitCtx.hoursSinceLast >= 4) return "¿Por dónde empezamos?";
+    if (hour >= 22 || hour < 5)               return "¿Qué más sacamos?";
+    if (hour >= 5  && hour < 12)              return "¿Qué tenemos hoy?";
+    if (hour >= 12 && hour < 20)              return "¿En qué te ayudo?";
+    return "¿Qué necesitas?";
+  }, [visitCtx, hour]);
 
   return (
     <div className="relative flex flex-col h-full bg-s-bg">
