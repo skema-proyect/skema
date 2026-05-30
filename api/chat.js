@@ -1086,7 +1086,7 @@ async function buildFileBlocks(name, mediaType, base64) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { messages = [], projectInstructions, userInstructions, today, attachedFile, conversationId, userId, existingPlanId } = req.body;
+  const { messages = [], projectInstructions, userInstructions, today, attachedFile, conversationId, userId, existingPlanId, forceDeep } = req.body;
   if (!messages.length) return res.status(400).json({ error: "Sin mensajes" });
 
   const userContext = userInstructions?.trim()
@@ -1474,7 +1474,7 @@ https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S`;
     // ── General chat — router ──
     // If there's a file attached, always use Claude (Perplexity can't process files)
     const isInvestigar = !attachedFile && lastUser.content.startsWith("Busca información actualizada sobre ");
-    const classification = attachedFile ? "NO" : await classifyQuery(lastUser.content, isInvestigar);
+    const classification = attachedFile ? "NO" : forceDeep ? "DEEP" : await classifyQuery(lastUser.content, isInvestigar);
 
     if (classification !== "NO") {
       const content = await searchPerplexity(lastUser.content, classification);

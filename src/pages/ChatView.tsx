@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useOutletContext, useLocation } from "react-router-dom";
-import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check, Plus, Camera, Image as ImageIcon, Paperclip, Globe } from "lucide-react";
+import { Send, Mic, Download, CalendarCheck, StickyNote, FileDown, X, Check, Plus, Camera, Image as ImageIcon, Paperclip, Globe, Search } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { conversations as convsDB, projects as projectsDB, events as eventsDB, notes as notesDB, uid, now } from "@/lib/db";
@@ -29,9 +29,11 @@ export default function ChatView() {
   const [projectInstructions, setProjectInstructions] = useState<string | null>(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [attachedFile,   setAttachedFile]   = useState<{ name: string; mediaType: string; base64: string; preview?: string } | null>(null);
-  const [searchMode,     setSearchMode]     = useState(false);
-  const [isMultiLine,    setIsMultiLine]    = useState(false);
-  const [analyzingFile,  setAnalyzingFile]  = useState(false);
+  const [searchMode,         setSearchMode]         = useState(false);
+  const [investigationMode,  setInvestigationMode]  = useState(false);
+  const [invData,            setInvData]            = useState({ context: "", query: "", format: "" });
+  const [isMultiLine,        setIsMultiLine]        = useState(false);
+  const [analyzingFile,      setAnalyzingFile]      = useState(false);
 
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
@@ -99,7 +101,7 @@ export default function ChatView() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showAttachMenu]);
 
-  const send = useCallback(async (text?: string) => {
+  const send = useCallback(async (text?: string, options?: { forceDeep?: boolean }) => {
     let content = (text ?? input).trim();
     const currentFile = attachedFile;
     if (!content && !currentFile) return;
@@ -159,6 +161,7 @@ export default function ChatView() {
           userId: profile?.id ?? undefined,
           existingPlanId: existingPlanMsg?.floorPlan?.planId ?? undefined,
           ...(currentFile ? { attachedFile: { name: currentFile.name, mediaType: currentFile.mediaType, base64: currentFile.base64 } } : {}),
+          ...(options?.forceDeep ? { forceDeep: true } : {}),
         }),
       });
       const data = await res.json();
@@ -197,6 +200,18 @@ export default function ChatView() {
       bump();
     }
   }, [input, loading, messages, setCurrentConvId, bump, attachedFile, searchMode]);
+
+  const sendInvestigation = useCallback(() => {
+    if (!invData.query.trim() || loading) return;
+    const parts: string[] = [];
+    if (invData.context.trim()) parts.push(`Contexto: ${invData.context.trim()}`);
+    parts.push(invData.query.trim());
+    if (invData.format.trim()) parts.push(`Formato de respuesta: ${invData.format.trim()}`);
+    const prompt = parts.join("\n");
+    setInvestigationMode(false);
+    setInvData({ context: "", query: "", format: "" });
+    send(prompt, { forceDeep: true });
+  }, [invData, loading, send]);
 
   // ── Voice ────────────────────────────────────────────────────────────────────
   const startVoice = () => {
@@ -431,6 +446,48 @@ export default function ChatView() {
       <div className="px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}>
         <div className="max-w-2xl mx-auto">
 
+          {/* Panel de investigación */}
+          {investigationMode && (
+            <div className="mb-2 bg-s-surface border border-s-border rounded-2xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-s-text flex items-center gap-1.5">
+                  <Search size={12} /> Investigación profunda
+                </span>
+                <button onClick={() => setInvestigationMode(false)} className="text-s-muted hover:text-s-text"><X size={12} /></button>
+              </div>
+              <input
+                placeholder="Tu rol o contexto del proyecto..."
+                value={invData.context}
+                onChange={e => setInvData(d => ({ ...d, context: e.target.value }))}
+                className="w-full text-[13px] bg-s-bg border border-s-border rounded-lg px-3 py-1.5 text-s-text placeholder:text-s-muted focus:outline-none focus:border-s-text"
+              />
+              <textarea
+                placeholder="¿Qué necesitas saber exactamente?"
+                value={invData.query}
+                onChange={e => setInvData(d => ({ ...d, query: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendInvestigation(); } }}
+                className="w-full text-[13px] bg-s-bg border border-s-border rounded-lg px-3 py-1.5 text-s-text placeholder:text-s-muted focus:outline-none focus:border-s-text resize-none"
+                rows={2}
+              />
+              <div className="flex gap-2 items-center">
+                <input
+                  placeholder="Formato (informe, listado, comparativa...)"
+                  value={invData.format}
+                  onChange={e => setInvData(d => ({ ...d, format: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter") sendInvestigation(); }}
+                  className="flex-1 text-[13px] bg-s-bg border border-s-border rounded-lg px-3 py-1.5 text-s-text placeholder:text-s-muted focus:outline-none focus:border-s-text"
+                />
+                <button
+                  onClick={sendInvestigation}
+                  disabled={!invData.query.trim() || loading}
+                  className="px-4 py-1.5 bg-s-accent text-s-accent-text text-[13px] rounded-lg disabled:opacity-40 hover:opacity-80 transition-opacity"
+                >
+                  Investigar
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Attachment / search chips */}
           {(attachedFile || searchMode) && (
             <div className="flex flex-wrap items-center gap-2 px-1 mb-2">
@@ -482,6 +539,10 @@ export default function ChatView() {
                   <button onClick={() => { setSearchMode(true); setShowAttachMenu(false); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
                     <Globe size={14} /> Buscar en internet
+                  </button>
+                  <button onClick={() => { setInvestigationMode(true); setShowAttachMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] text-s-muted hover:bg-s-bg hover:text-s-text transition-colors">
+                    <Search size={14} /> Investigación
                   </button>
                 </div>
               )}
